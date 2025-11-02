@@ -8,14 +8,23 @@ import paho.mqtt.client as mqtt
 import os
 from datetime import datetime
 
-PICAM = 1
-DBG_LEVEL = 0
-#DBG_LEVEL = 1
-#DBG_LEVEL = 2
-#DBG_LEVEL = 1 + 2 + 4
+PICAM = 1           # Set to 1 to support RPI Camera, otherise, use the -f argument
+RPIGPIO = 1         # Set to 1 to support GPIO pin below. Must include the --gpio argument as well
+GPIO_PWR_PIN = 16   # physical GPIO board number for pH power detection (active low)
+GPIO_ALARM_PIN = 12 # physical GPIO board number for pH alarm detection (active low)
+
+DBG_LEVEL = 0           # No debugging
+#DBG_LEVEL = 1          # Show image of detecting the LCD rectangle
+#DBG_LEVEL = 2          # Show image of detecting the digit rectangle
+#DBG_LEVEL = 4          # Show info and image of detection the individual digit
+#DBG_LEVEL = 1 + 2 + 4  # Show all
 
 if PICAM:
     from picamera2 import Picamera2
+
+if RPIGPIO:
+    import RPi.GPIO as GPIO
+
 
 def sort_contours(cnts, method="left-to-right"):
 	# initialize the reverse flag and sort index
@@ -137,6 +146,7 @@ mqtt_port = 1883
 mqtt_connected = 0
 save_filename = ""
 first_image = 1
+use_gpio = 0
 
 def app_parser_arguments():
     global file_name
@@ -147,8 +157,9 @@ def app_parser_arguments():
     global mqtt_addr
     global mqtt_port
     global save_filename
+    global use_gpio
 
-    parser = argparse.ArgumentParser(description='LCD OCR')
+    parser = argparse.ArgumentParser(description='Chem Feeder MQTT')
     parser.add_argument('-f','--file', help='Input image file', default = "")
     parser.add_argument('-r','--rotate', type=int, help='Rotate image', default = 0)
     parser.add_argument('--mqtt', help='Publish to MQTT', action="store_true")
@@ -157,6 +168,7 @@ def app_parser_arguments():
     parser.add_argument('--addr', help='MQTT address', default = "127.0.0.1")
     parser.add_argument('--port', type=int, help='MQTT port', default =1883)
     parser.add_argument('--save', type=str, help='Save capture image to file', default="")
+    parser.add_argument('--gpio', action="store_true", help="Enable GPIO for power/alarm detection")
 
     args = parser.parse_args()
     file_name = args.file
@@ -167,6 +179,7 @@ def app_parser_arguments():
     mqtt_addr = args.addr
     mqtt_port = args.port
     save_filename = args.save
+    use_gpio = args.gpio
 
 def extract_digits(image):
     if rotate != 0:
@@ -369,7 +382,7 @@ def extract_digits(image):
             digit = DIGITS_LOOKUP[tuple(on)]
             digits.append(digit)
         except:            
-            if DBG_LEVEL > 0:
+            if DBG_LEVEL & 4:
                 print("Un-expected digit loopkup")
             return ERR_NODIGIT, 0.0
 
@@ -377,17 +390,18 @@ def extract_digits(image):
         ph = (digits[0] * 100 + digits[1] * 10 + digits[2]) / 100.0
         return ERR_SUCCESS, ph
 
-    if DBG_LEVEL > 0:
+    if DBG_LEVEL & 4:
         print("Un-expected digits: ", end="")
         print(digits)
     return ERR_NODIGITS, 0.0
 
 if PICAM:
-    picam2 = Picamera2()
+    picam2 = None
 
 def camera_init():
     global picam2
 
+    picam2 = Picamera2()
     config = picam2.create_still_configuration(
             main = {"size": (2304, 1296)},
             raw = {'size': picam2.sensor_resolution},
@@ -476,8 +490,24 @@ def mqtt_publish(topic, message):
         print(f"Publishing '{message}' topic '{topic}'")
         mqtt_client.publish(topic, message)
 
+def gpio_init():
+    GPIO.setmode(GPIO.BCM)
+    GPIO.setup(GPIO_PWR_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+    GPIO.setup(GPIO_ALARM_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
 
-#
+def gpio_get_pwr():
+
+    if GPIO.input(GPIO_PWR_PIN) == GPIO.LOW:
+        return True
+    return False
+
+def gpio_get_alarm():
+
+    if GPIO.input(GPIO_ALARM_PIN) == GPIO.LOW:
+        return True
+    return False
+
+
 # Detect Alarm
 # try:
 #     image = Image.open(args.file)
@@ -492,7 +522,6 @@ def mqtt_publish(topic, message):
 
 if __name__ == "__main__":
     app_parser_arguments()
-
     print("Chem Feeder MQTT")
 
     if len(file_name) > 0:
@@ -504,33 +533,48 @@ if __name__ == "__main__":
         mqtt_init()
     if PICAM:
         camera_init()
+    if RPIGPIO and use_gpio:
+        gpio_init()
 
     while True:
 
+        rc = ERR_SUCCESS
+        alarm = False
+        ph = 0.0
         if len(file_name) > 0:
             image = get_file_image(file_name)
         else:
-            image = get_camera_image()
-
-        for i in range(3):
-            rc, ph = extract_digits(image)
+            if RPIGPIO and use_gpio:
+                if gpio_get_pwr() == False:
+                    # No power to pH controller
+                    print("Power: Off")
+                    rc = ERR_NOLCD
+                else:
+                    alarm = gpio_get_alarm()
+                    print("Power: On")
             if rc == ERR_SUCCESS:
-                now = datetime.now()
-                print(now.strftime("%H:%M:%S: "), end="")
-                print(ph, flush=True)
-                break;
-            if rc == ERR_NOIMAGE and i == 2:
-                print("No image", flush=True)
-            if rc == ERR_NOLCD and i == 2:
-                print("LCD is OFF", flush=True)
-            if rc == ERR_NODIGITS and i == 2:
-                print("Not enough digits on LCD", flush=True)
-            if rc == ERR_NODIGIT and i == 2:
-                print("Not enough digit on LCD", flush=True)
-            if rc == ERR_NORECT and i == 2:
-                print("No digit on LCD", flush=True)
-            if rc == ERR_NOSCREEN_DETECTED and i == 2:
-                print("No screen detected", flush=True)
+                image = get_camera_image()
+
+        if rc == ERR_SUCCESS:
+            for i in range(3):
+                rc, ph = extract_digits(image)
+                if rc == ERR_SUCCESS:
+                    now = datetime.now()
+                    print(now.strftime("%H:%M:%S: "), end="")
+                    print(ph, flush=True)
+                    break;
+                if rc == ERR_NOIMAGE and i == 2:
+                    print("No image", flush=True)
+                if rc == ERR_NOLCD and i == 2:
+                    print("LCD is OFF", flush=True)
+                if rc == ERR_NODIGITS and i == 2:
+                    print("Not enough digits on LCD", flush=True)
+                if rc == ERR_NODIGIT and i == 2:
+                    print("Not enough digit on LCD", flush=True)
+                if rc == ERR_NORECT and i == 2:
+                    print("No digit on LCD", flush=True)
+                if rc == ERR_NOSCREEN_DETECTED and i == 2:
+                    print("No screen detected", flush=True)
 
         if (rc == ERR_SUCCESS or rc == ERR_NOLCD) and mqtt_pub:
                 mqtt_publish("aqualinkd/CHEM/pH/set", f"{ph:.2f}")
