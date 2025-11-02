@@ -1,0 +1,23 @@
+#
+# Service Script Sample for run at start up
+#
+# 1. Change <your password>
+# 2. Copy to '/etc/systemd/system/chem-feeder-mqtt.service'
+# 3. Copy the file chem-feeder-mqtt.py to '/usr/local/bin/chem-feeder-mqtt.py'
+# 4. Command to enable at system start up
+#
+#    sudo systemctl daemon-reload
+#    sudo systemctl enable chem-feeder-mqtt.service
+#    sudo systemctl start chem-feeder-mqtt.service
+[Unit]
+Description=Chem Feeder MQTT
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/python3 /user/local/bin/ph-chem-feeder.py --mqtt --password <your password>
+WorkingDirectory=/home/pi/
+Restart=always
+User=pi
+
+[Install]
+WantedBy=multi-user.target
