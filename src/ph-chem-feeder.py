@@ -10,8 +10,8 @@ from datetime import datetime
 
 PICAM = 1           # Set to 1 to support RPI Camera, otherise, use the -f argument
 RPIGPIO = 1         # Set to 1 to support GPIO pin below. Must include the --gpio argument as well
-GPIO_PWR_PIN = 16   # physical GPIO board number for pH power detection (active low)
-GPIO_ALARM_PIN = 12 # physical GPIO board number for pH alarm detection (active low)
+GPIO_PWR_PIN = 0    # physical GPIO board number for pH power detection (active low). Set to 0 to ignore
+GPIO_ALARM_PIN = 16 # physical GPIO board number for pH alarm detection (active low). Set to 0 to ignore
 
 DBG_LEVEL = 0           # No debugging
 #DBG_LEVEL = 1          # Show image of detecting the LCD rectangle
@@ -495,7 +495,22 @@ def gpio_init():
     GPIO.setup(GPIO_PWR_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
     GPIO.setup(GPIO_ALARM_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
 
+def gpio_pwr_configured():
+
+    if GPIO_PWR_PIN == 0:
+        return False
+    return True
+
+def gpio_alarm_configured():
+
+    if GPIO_ALARM_PIN == 0:
+        return False
+    return True
+
 def gpio_get_pwr():
+
+    if GPIO_PWR_PIN == 0:
+        return True
 
     if GPIO.input(GPIO_PWR_PIN) == GPIO.LOW:
         return True
@@ -503,7 +518,10 @@ def gpio_get_pwr():
 
 def gpio_get_alarm():
 
-    if GPIO.input(GPIO_ALARM_PIN) == GPIO.LOW:
+    if GPIO_ALARM_PIN == 0:
+        return False
+
+    if GPIO.input(GPIO_ALARM_PIN) == GPIO.HIGH:
         return True
     return False
 
@@ -545,19 +563,28 @@ if __name__ == "__main__":
             image = get_file_image(file_name)
         else:
             if RPIGPIO and use_gpio:
-                if gpio_get_pwr() == False:
-                    # No power to pH controller
-                    print("Power: Off")
-                    rc = ERR_NOLCD
-                else:
+                if gpio_pwr_configured():
+                    if gpio_get_pwr() == False:
+                        # No power to pH controller
+                        print("Power: Off")
+                        rc = ERR_NOLCD
+                    else:
+                        print(f"Power: On")
+                if gpio_alarm_configured():
                     alarm = gpio_get_alarm()
-                    print("Power: On")
             if rc == ERR_SUCCESS:
                 image = get_camera_image()
 
         if rc == ERR_SUCCESS:
             for i in range(3):
-                rc, ph = extract_digits(image)
+
+                try:
+                    rc, ph = extract_digits(image)
+
+                except Exception as e:
+                    rc = ERR_NODIGITS
+                    ph = 0.0
+
                 if rc == ERR_SUCCESS:
                     now = datetime.now()
                     print(now.strftime("%H:%M:%S: "), end="")
@@ -576,10 +603,20 @@ if __name__ == "__main__":
                 if rc == ERR_NOSCREEN_DETECTED and i == 2:
                     print("No screen detected", flush=True)
 
+        if rc == ERR_NOLCD:
+            # Unit is off. False alarm
+            alarm = False
+
         if (rc == ERR_SUCCESS or rc == ERR_NOLCD) and mqtt_pub:
                 mqtt_publish("aqualinkd/CHEM/pH/set", f"{ph:.2f}")
 
-        time.sleep(5.0)
+        if rc == ERR_NOLCD:
+            # When there is no LCD, this implies that the unit is off.
+            # As such, sleep longer
+            time.sleep(10.0)
+        else:
+            time.sleep(5.0)
 
     if mqtt_pub:
         mqtt_close()
+

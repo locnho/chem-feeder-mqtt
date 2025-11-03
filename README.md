@@ -43,9 +43,9 @@ Then, on the browser:
 
 # Configuration with RPI GPIO
 
-GPIO Pin 16 - Power: This pin is used to detect power to the pH controller (active low).
+GPIO Pin 0 - Power: This pin is used to detect power to the pH controller (active low).
 
-GPIO Pin 12 - Alarm: This pin is used to detect pH controller alarm (active low).
+GPIO Pin 16 - Alarm: This pin is used to detect pH controller alarm (active high). Connect to controller Normal Open (NO) side.
 
 Use this command:
 
