@@ -29,6 +29,18 @@ Refer to image below as an exmpale:
 
 ![screenshot](test-images/aligned.jpg)
 
+You can run this application to have a live view from browser:
+
+``
+    python ./src/pyicam-stream.py
+``
+
+Then, on the browser: 
+
+``
+    http://<ip address>:5000
+``
+
 # Configuration with RPI GPIO
 
 GPIO Pin 16 - Power: This pin is used to detect power to the pH controller (active low).
