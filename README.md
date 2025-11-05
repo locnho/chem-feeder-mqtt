@@ -41,6 +41,10 @@ Then, on the browser:
     http://<ip address>:5000
 ``
 
+Below is an image of the pH Controller and RPI camera mount:
+
+![screenshot](test-images/IMG_4940.jpg)
+
 # Configuration with RPI GPIO
 
 GPIO Pin 0 - Power: This pin is used to detect power to the pH controller (active low).
