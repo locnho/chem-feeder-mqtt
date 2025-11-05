@@ -43,7 +43,7 @@ Then, on the browser:
 
 Below is an image of the pH Controller and RPI camera mount:
 
-![screenshot](test-images/IMG_4940.jpg)
+![screenshot](test-images/ph-controller.jpg)
 
 # Configuration with RPI GPIO
 
