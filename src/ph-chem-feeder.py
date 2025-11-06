@@ -249,8 +249,8 @@ def extract_digits(image):
             displayCnt = approx
             break;
 
-    if displayCnt is None:
-        if image_bw_total_one <= 0:
+    if displayCnt is None or image_bw_total_one <= 25000:
+        if image_bw_total_one <= 25000:
             return ERR_NOLCD, 0.0
         return ERR_NOSCREEN_DETECTED
 
@@ -604,11 +604,17 @@ if __name__ == "__main__":
                     print("No screen detected", flush=True)
 
         if rc == ERR_NOLCD:
-            # Unit is off. False alarm
+            # Unit is off, change alarm to False
             alarm = False
 
-        if (rc == ERR_SUCCESS or rc == ERR_NOLCD) and mqtt_pub:
-                mqtt_publish("aqualinkd/CHEM/pH/set", f"{ph:.2f}")
+        if mqtt_pub:
+            if alarm == False:
+                if rc == ERR_SUCCESS or rc == ERR_NOLCD:
+                    mqtt_publish("aqualinkd/CHEM/pH/set", f"{ph:.2f}")
+                else:
+                    mqtt_publish("aqualinkd/CHEM/pH/set", f"2.0")
+            else:
+                 mqtt_publish("aqualinkd/CHEM/pH/set", f"1.0")
 
         if rc == ERR_NOLCD:
             # When there is no LCD, this implies that the unit is off.
