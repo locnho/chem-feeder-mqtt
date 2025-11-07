@@ -19,13 +19,6 @@ DBG_LEVEL = 0           # No debugging
 #DBG_LEVEL = 4          # Show info and image of detection the individual digit
 #DBG_LEVEL = 1 + 2 + 4  # Show all
 
-if PICAM:
-    from picamera2 import Picamera2
-
-if RPIGPIO:
-    import RPi.GPIO as GPIO
-
-
 def sort_contours(cnts, method="left-to-right"):
 	# initialize the reverse flag and sort index
 	reverse = False
@@ -187,10 +180,11 @@ def extract_digits(image):
     
     image_bw = cv2.threshold(image, 127, 255, cv2.THRESH_BINARY)[1]
     image_bw_total_one = cv2.countNonZero(image_bw)
+    img_height, img_width = image_bw.shape
+    image_bw_percentage = image_bw_total_one / (img_height * img_width)
     contours, _ = cv2.findContours(image_bw, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if contours:
         largest_contour = max(contours, key=cv2.contourArea)
-        img_height, img_width = image_bw.shape
         x, y, w, h = cv2.boundingRect(largest_contour)
         border = 100
         if x >= border:
@@ -249,8 +243,10 @@ def extract_digits(image):
             displayCnt = approx
             break;
 
-    if displayCnt is None or image_bw_total_one <= 25000:
-        if image_bw_total_one <= 25000:
+    if displayCnt is None or image_bw_percentage <= 0.02:
+        #
+        # Did not detected a rectangle or the percentage of white is lesser than 2%
+        if image_bw_percentage <= 0.02:
             return ERR_NOLCD, 0.0
         return ERR_NOSCREEN_DETECTED
 
@@ -490,6 +486,7 @@ def mqtt_publish(topic, message):
         print(f"Publishing '{message}' topic '{topic}'")
         mqtt_client.publish(topic, message)
 
+
 def gpio_init():
     GPIO.setmode(GPIO.BCM)
     GPIO.setup(GPIO_PWR_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
@@ -549,9 +546,13 @@ if __name__ == "__main__":
 
     if mqtt_pub:
         mqtt_init()
-    if PICAM:
+
+    if PICAM and len(file_name) <= 0:
+        from picamera2 import Picamera2
         camera_init()
+
     if RPIGPIO and use_gpio:
+        import RPi.GPIO as GPIO
         gpio_init()
 
     while True:
