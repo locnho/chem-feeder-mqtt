@@ -27,7 +27,7 @@ To mount the camera over the LCD display, use galvanized interlocking hanger str
 You need to position the camera such that it captures the outer square outline of the LCD screen.
 Refer to image below as an exmpale:
 
-![screenshot](test-images/aligned.jpg)
+![screenshot](test-images/731b.jpg)
 
 You can run this application to have a live view from browser:
 
