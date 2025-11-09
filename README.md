@@ -6,7 +6,7 @@ This project provides detection of Pool pH value and report to AquaLinkD via MQT
  * Extract the pH value from the LCD 7 segment display
  * Make a connection to the MQTT service to publish the pH value 
 
-This works make use of https://github.com/ved-sharma/Digits_recognition_OpenCV_Python and https://pyimagesearch.com/2018/09/17/opencv-ocr-and-text-recognition-with-tesseract.
+This work makes use of https://github.com/ved-sharma/Digits_recognition_OpenCV_Python and https://pyimagesearch.com/2018/09/17/opencv-ocr-and-text-recognition-with-tesseract.
 
 Currently, there are two vesions - Python and C++. The Python version is tested and updated. The C++ version is outdated.
 
@@ -27,7 +27,7 @@ To mount the camera over the LCD display, use galvanized interlocking hanger str
 You need to position the camera such that it captures the outer square outline of the LCD screen.
 Refer to image below as an exmpale:
 
-![screenshot](test-images/aligned.jpg)
+![screenshot](test-images/731b.jpg)
 
 You can run this application to have a live view from browser:
 
@@ -80,9 +80,14 @@ So far, it seems to be functionaly correctly. If you need to tune for your LCD d
 
 This will show you what the image looks like. 
 
-First, make sure that the detection of the screen is correct. It should crop to just the LCD screen.
+First, make sure that the detection of the screen is correct. It should crop to just the LCD screen. Refer to image below:
+
+![screenshot](test-images/cropped.png)
 
 Second, make sure that each digit has a rectangle draw on it. This indicates that it detected the location of the 3 digits.
+
+![screenshot](test-images/digit-rect.png)
+
 
 Finally, the decode of each digits. This last part should just work. Otherwise you will need to adjust the detection of the individual segment.
 
