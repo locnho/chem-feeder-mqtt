@@ -80,9 +80,14 @@ So far, it seems to be functionaly correctly. If you need to tune for your LCD d
 
 This will show you what the image looks like. 
 
-First, make sure that the detection of the screen is correct. It should crop to just the LCD screen.
+First, make sure that the detection of the screen is correct. It should crop to just the LCD screen. Refer to image below:
+
+![screenshot](test-images/cropped.png)
 
 Second, make sure that each digit has a rectangle draw on it. This indicates that it detected the location of the 3 digits.
+
+![screenshot](test-images/digit-rect.png)
+
 
 Finally, the decode of each digits. This last part should just work. Otherwise you will need to adjust the detection of the individual segment.
 
