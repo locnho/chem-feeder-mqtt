@@ -22,6 +22,15 @@ The Raspbery PI 5 also runs AqualinkD.
 
 To mount the camera over the LCD display, use galvanized interlocking hanger strap. I strapped my pH tank with this. Wrap the hanger strap with some transparent tape. Then bend and squeeze in between the RPI heat sink.
 
+# pH Report Values
+
+| pH            | Description                           |
+|---------------|---------------------------------------|
+|  0.0          | Unit is powered off or no LCD display |
+|  1.0          | Alarm is asserted by the unit         |
+|  2.0          | Unable to detect digits correctly     |
+|  other values | Values as reported by the unit         |
+
 # How to position the camera?
 
 You need to position the camera such that it captures the outer square outline of the LCD screen.
