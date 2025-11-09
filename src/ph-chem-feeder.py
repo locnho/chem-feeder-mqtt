@@ -140,6 +140,7 @@ mqtt_connected = 0
 save_filename = ""
 first_image = 1
 use_gpio = 0
+self_test = False
 
 def app_parser_arguments():
     global file_name
@@ -151,6 +152,7 @@ def app_parser_arguments():
     global mqtt_port
     global save_filename
     global use_gpio
+    global self_test
 
     parser = argparse.ArgumentParser(description='Chem Feeder MQTT')
     parser.add_argument('-f','--file', help='Input image file', default = "")
@@ -162,6 +164,7 @@ def app_parser_arguments():
     parser.add_argument('--port', type=int, help='MQTT port', default =1883)
     parser.add_argument('--save', type=str, help='If provided and detection failure, save capture image to file', default="")
     parser.add_argument('--gpio', action="store_true", help="Enable GPIO for power/alarm detection")
+    parser.add_argument('--selftest', action="store_true", help="Run self-test and exit", default = False)
 
     args = parser.parse_args()
     file_name = args.file
@@ -173,6 +176,7 @@ def app_parser_arguments():
     mqtt_port = args.port
     save_filename = args.save
     use_gpio = args.gpio
+    self_test = args.selftest
 
 
 def extract_digits(image):
@@ -521,6 +525,30 @@ def gpio_get_alarm():
         return True
     return False
 
+def selftest():
+    directory_path = "test-images"
+    total = 0
+    failed = 0
+    for filename in os.listdir(directory_path):
+        filepath = os.path.join(directory_path, filename)
+        if os.path.isfile(filepath) and filename[:3].isdigit():
+            total += 1
+            try:
+                image = get_file_image(filepath)
+                rc, ph = extract_digits(image)
+                expect_value = int(filename[:3]) / 100.0
+                if ph != expect_value:
+                    print(f"Fail to decode {filepath}")
+                    failed += 1
+
+            except Exception as e:
+                failed += 1
+                print(f"Fail to decode {filepath}")
+
+    if failed == 0:
+        print(f"PASSED {total}/{total}")
+    else:
+        print(f"FAILED {failed}/{total}")
 
 # Detect Alarm
 # try:
@@ -537,6 +565,10 @@ def gpio_get_alarm():
 if __name__ == "__main__":
     app_parser_arguments()
     print("Chem Feeder MQTT")
+
+    if self_test:
+        selftest()
+        exit(0)
 
     if len(file_name) > 0:
         print(f"Using image from {file_name}", flush=True)
