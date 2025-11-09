@@ -6,7 +6,7 @@ This project provides detection of Pool pH value and report to AquaLinkD via MQT
  * Extract the pH value from the LCD 7 segment display
  * Make a connection to the MQTT service to publish the pH value 
 
-This works make use of https://github.com/ved-sharma/Digits_recognition_OpenCV_Python and https://pyimagesearch.com/2018/09/17/opencv-ocr-and-text-recognition-with-tesseract.
+This work makes use of https://github.com/ved-sharma/Digits_recognition_OpenCV_Python and https://pyimagesearch.com/2018/09/17/opencv-ocr-and-text-recognition-with-tesseract.
 
 Currently, there are two vesions - Python and C++. The Python version is tested and updated. The C++ version is outdated.
 
