@@ -113,6 +113,16 @@ Finally, the decode of each digits. This last part should just work. Otherwise y
         ]
 ```
 
+# Run Regression Testing
+
+To run a regression testing with all images in folder test-images with first 3 letters as digit, issue the following command:
+
+```
+    python .\src\ph-chem-feeder.py -r 90 --selftest
+    Chem Feeder MQTT
+    PASSED 17/17
+```
+
 # Misc Note
 
 If your camera is mounted at a different direction, use the "-r" parameter to rotate.
