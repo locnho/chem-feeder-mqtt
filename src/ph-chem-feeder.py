@@ -121,13 +121,13 @@ DIGITS_LOOKUP = {
 }
 
 ERR_SUCCESS = 0
-ERR_NOIMAGE = -1
-ERR_NOLCD = -2
-ERR_NODIGITS = -3
-ERR_NODIGIT = -4
-ERR_NOMQTT = -5
-ERR_NORECT = -6
-ERR_NOSCREEN_DETECTED = -7
+ERR_NOLCD = -1
+ERR_NODIGITS = -2
+ERR_NODIGIT = -3
+ERR_NORECT = -4
+ERR_NOSCREEN_DETECTED = -5
+
+ERR_NOMQTT = -100
 
 file_name = ""
 rotate = 0
@@ -160,7 +160,7 @@ def app_parser_arguments():
     parser.add_argument('--password', help='MQTT password', default = "password")
     parser.add_argument('--addr', help='MQTT address', default = "127.0.0.1")
     parser.add_argument('--port', type=int, help='MQTT port', default =1883)
-    parser.add_argument('--save', type=str, help='Save capture image to file', default="")
+    parser.add_argument('--save', type=str, help='If provided and detection failure, save capture image to file', default="")
     parser.add_argument('--gpio', action="store_true", help="Enable GPIO for power/alarm detection")
 
     args = parser.parse_args()
@@ -173,6 +173,7 @@ def app_parser_arguments():
     mqtt_port = args.port
     save_filename = args.save
     use_gpio = args.gpio
+
 
 def extract_digits(image):
     if rotate != 0:
@@ -348,7 +349,7 @@ def extract_digits(image):
         # define the set of 7 segments
         segments = [
             ((0, 0), (w, dH)),							 # top
-            ((0, 0), (dW, h // 2)),						 # top-left
+            ((2, 0), (dW + 2, h // 2)),					 # top-left
             ((w - dW - 2, 0), (w, h // 2)), 			 # top-right
             ((0, (h // 2) - dHC), (w, (h // 2) + dHC)),  # center
             ((0, h // 2), (dW, h)),						 # bottom-left
@@ -416,8 +417,6 @@ def get_camera_image():
     image = picam2.capture_array("main")
     picam2.stop()
     image_cv = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    if len(save_filename) > 0:
-        cv2.imwrite(save_filename, image_cv)
 
     return image_cv
 
@@ -444,7 +443,7 @@ def on_connect(client, userdata, flags, rc, properties):
 
 # Callback function for when a message is published
 def on_publish(client, userdata, mid, reason_code, properties):
-    print(f"MQTT: Message {mid} published")
+    print(f"MQTT: Message {mid} published", flush=True)
 
 mqtt_client = None
 
@@ -560,6 +559,7 @@ if __name__ == "__main__":
         rc = ERR_SUCCESS
         alarm = False
         ph = 0.0
+        image = None
         if len(file_name) > 0:
             image = get_file_image(file_name)
         else:
@@ -591,18 +591,25 @@ if __name__ == "__main__":
                     print(now.strftime("%H:%M:%S: "), end="")
                     print(ph, flush=True)
                     break;
-                if rc == ERR_NOIMAGE and i == 2:
-                    print("No image", flush=True)
+
+                save_image = False
                 if rc == ERR_NOLCD and i == 2:
                     print("LCD is OFF", flush=True)
                 if rc == ERR_NODIGITS and i == 2:
                     print("Not enough digits on LCD", flush=True)
+                    save_image = True
                 if rc == ERR_NODIGIT and i == 2:
                     print("Not enough digit on LCD", flush=True)
+                    save_image = True
                 if rc == ERR_NORECT and i == 2:
                     print("No digit on LCD", flush=True)
+                    save_image = True
                 if rc == ERR_NOSCREEN_DETECTED and i == 2:
                     print("No screen detected", flush=True)
+                    save_image = True
+
+                if save_image and len(save_filename) > 0 and image is not None:
+                    cv2.imwrite(save_filename, image)
 
         if rc == ERR_NOLCD:
             # Unit is off, change alarm to False
