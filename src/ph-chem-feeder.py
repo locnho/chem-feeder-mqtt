@@ -261,63 +261,68 @@ def extract_digits(image):
         cv2.waitKey(0)
         cv2.destroyAllWindows()
 
-    image_warped = imutils.resize(image_warped, height=128)
+    for i in range(2):
+        image_resized = imutils.resize(image_warped, height=128)
+        #
+        # First attempt will not sharpen the image.
+        # Second attempt will try with sharpen the image.
+        if i == 1:
+            kernel = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]])
+            image_resized = cv2.filter2D(image_resized, -1, kernel)
 
-    #
-    # Sharpen the image
-    # kernel = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]])
-    # image_warped = cv2.filter2D(image_warped, -1, kernel)
-
-    alpha = 1.05	# Adjust contrast (e.g., 1.5 for higher contrast)
-    beta = -115		# Adjust brightness (e.g., 30 for brighter)
-    # Apply the linear transformation: new_image = alpha * original_image + beta
-    image_warped = cv2.convertScaleAbs(image_warped, alpha=alpha, beta=beta)
-    if DBG_LEVEL & 2:
-        cv2.imshow('Brightness', image_warped) 
-        cv2.waitKey(0)
-        cv2.destroyAllWindows()
-
-    # convert image to threshold and then apply a series of morphological
-    # operations to cleanup the thresholded image
-    image_thresh = cv2.threshold(image_warped, 127, 255, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)[1]
-    if DBG_LEVEL & 2:
-        cv2.imshow('Thresh', image_thresh)
-        cv2.waitKey(0)
-        cv2.destroyAllWindows()
-    # kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (1, 5))
-    # image_thresh = cv2.morphologyEx(image_thresh, cv2.MORPH_OPEN, kernel)
-    # if DBG_LEVEL & 2:
-    #     cv2.imshow('Morpho', image_thresh)
-    #     cv2.waitKey(0)
-    #     cv2.destroyAllWindows()
-
-    kernel = np.ones((3,3),np.uint8)
-    image_dilation = cv2.dilate(image_thresh, kernel, iterations = 1)
-    image_erosion = cv2.erode(image_dilation, kernel, iterations = 1)
-    if DBG_LEVEL & 2:
-        cv2.imshow('Erosion', image_erosion) 
-        cv2.waitKey(0)
-        cv2.destroyAllWindows()
-
-    # find contours in the thresholded image, and put bounding box on the image
-    cnts = cv2.findContours(image_erosion.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-    cnts = imutils.grab_contours(cnts)
-
-    if DBG_LEVEL & 2:
-        image_w_bbox = image_erosion.copy()
-    digitCnts = []
-    for c in cnts:
-        # compute the bounding box of the contour
-        (x, y, w, h) = cv2.boundingRect(c)
+        alpha = 1.05	# Adjust contrast (e.g., 1.5 for higher contrast)
+        beta = -115		# Adjust brightness (e.g., 30 for brighter)
+        # Apply the linear transformation: new_image = alpha * original_image + beta
+        image_resized = cv2.convertScaleAbs(image_resized, alpha=alpha, beta=beta)
         if DBG_LEVEL & 2:
-            print(f"X {x} Y {y} W {w} H {h}")
-            # image_w_bbox = cv2.rectangle(image_w_bbox,(x, y),(x+w, y+h),(128, 128, 128),2)
-        # if the contour is sufficiently large, it must be a digit
-        if (w >= 7 and w <= 60) and (h >= 40 and h <= 55):
-            digitCnts.append(c)
+            cv2.imshow('Brightness', image_resized) 
+            cv2.waitKey(0)
+            cv2.destroyAllWindows()
+
+        # convert image to threshold and then apply a series of morphological
+        # operations to cleanup the thresholded image
+        image_thresh = cv2.threshold(image_resized, 127, 255, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)[1]
+        if DBG_LEVEL & 2:
+            cv2.imshow('Thresh', image_thresh)
+            cv2.waitKey(0)
+            cv2.destroyAllWindows()
+        # kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (1, 5))
+        # image_thresh = cv2.morphologyEx(image_thresh, cv2.MORPH_OPEN, kernel)
+        # if DBG_LEVEL & 2:
+        #     cv2.imshow('Morpho', image_thresh)
+        #     cv2.waitKey(0)
+        #     cv2.destroyAllWindows()
+
+        kernel = np.ones((3,3),np.uint8)
+        image_dilation = cv2.dilate(image_thresh, kernel, iterations = 1)
+        image_erosion = cv2.erode(image_dilation, kernel, iterations = 1)
+        if DBG_LEVEL & 2:
+            cv2.imshow('Erosion', image_erosion) 
+            cv2.waitKey(0)
+            cv2.destroyAllWindows()
+
+        # find contours in the thresholded image, and put bounding box on the image
+        cnts = cv2.findContours(image_erosion.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+        cnts = imutils.grab_contours(cnts)
+
+        if DBG_LEVEL & 2:
+            image_w_bbox = image_erosion.copy()
+        digitCnts = []
+        for c in cnts:
+            # compute the bounding box of the contour
+            (x, y, w, h) = cv2.boundingRect(c)
             if DBG_LEVEL & 2:
-                print(f"Found: X {x} Y {y} W {w} H {h}")
-                image_w_bbox = cv2.rectangle(image_w_bbox,(x, y),(x+w, y+h),(128, 128, 128),2)
+                print(f"X {x} Y {y} W {w} H {h}")
+                # image_w_bbox = cv2.rectangle(image_w_bbox,(x, y),(x+w, y+h),(128, 128, 128),2)
+            # if the contour is sufficiently large, it must be a digit
+            if (w >= 7 and w <= 60) and (h >= 40 and h <= 55):
+                digitCnts.append(c)
+                if DBG_LEVEL & 2:
+                    print(f"Found: X {x} Y {y} W {w} H {h}")
+                    image_w_bbox = cv2.rectangle(image_w_bbox,(x, y),(x+w, y+h),(128, 128, 128),2)
+
+        if len(digitCnts) == 3:
+            break
 
     if DBG_LEVEL & 2:
         cv2.imshow('Boxed', image_w_bbox) 
