@@ -89,7 +89,20 @@ Second, make sure that each digit has a rectangle draw on it. This indicates tha
 ![screenshot](test-images/digit-rect.png)
 
 
-Finally, the decode of each digits. This last part should just work. Otherwise you will need to adjust the detection of the individual segment.
+Finally, the decode of each digits. This last part should just work. Otherwise you will need to adjust the detection of the individual segment by changing this code fragment:
+
+```
+        # define the set of 7 segments
+        segments = [
+            ((0, 0), (w, dH)),							 # top
+            ((2, 0), (dW + 2, h // 2)),					 # top-left
+            ((w - dW - 2, 0), (w, h // 2)), 			 # top-right
+            ((0, (h // 2) - dHC), (w, (h // 2) + dHC)),  # center
+            ((0, h // 2), (dW, h)),						 # bottom-left
+            ((w - dW*2, h // 2), (w - 2, h)),		     # bottom-right
+            ((0, h - dH), (w, h))					     # bottom
+        ]
+```
 
 # Misc Note
 
