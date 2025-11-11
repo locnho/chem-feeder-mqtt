@@ -20,8 +20,6 @@ The hardware includes:
 
 The Raspbery PI 5 also runs AqualinkD.
 
-To mount the camera over the LCD display, use galvanized interlocking hanger strap. I strapped my pH tank with this. Wrap the hanger strap with some transparent tape. Then bend and squeeze in between the RPI heat sink.
-
 # pH Report Values
 
 | pH            | Description                           |
@@ -52,7 +50,14 @@ Then, on the browser:
 
 Below is an image of the pH Controller and RPI camera mount:
 
+To mount the camera over the LCD display, use galvanized interlocking hanger strap. I strapped my pH tank with this. Wrap the hanger strap with some transparent tape. Then bend and squeeze in between the RPI heat sink.
+
 ![screenshot](test-images/ph-controller.jpg)
+
+There is also mounting 3D models located at folder models. This will make adjust much simple.
+
+![screenshot](test-images/ph-controller-v2.jpg)
+
 
 # Configuration with RPI GPIO
 
