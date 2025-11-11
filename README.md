@@ -41,7 +41,7 @@ Refer to image below as an exmpale:
 You can run this application to have a live view from browser:
 
 ``
-    python ./src/pyicam-stream.py
+    python ./src/rpicam-stream.py
 ``
 
 Then, on the browser: 

@@ -179,11 +179,50 @@ def app_parser_arguments():
     self_test = args.selftest
 
 
+def sort_contours_top_to_bottom(contours):
+    # Create a list of (contour, bounding box) tuples
+    bounding_boxes = [cv2.boundingRect(c) for c in contours]
+    (contours, bounding_boxes) = zip(*sorted(zip(contours, bounding_boxes), key=lambda b: b[1][1])) # b[1][1] is the y-coordinate
+    return contours, bounding_boxes
+
+def sort_contours_left_to_right_within_lines(contours, bounding_boxes, y_threshold=10):
+    sorted_contours = []
+    current_line = []
+
+    if not contours:
+        return [], []
+
+    # Start with the first contour
+    current_line_y = bounding_boxes[0][1]
+
+    for i in range(len(contours)):
+        contour = contours[i]
+        bbox = bounding_boxes[i]
+
+        # If the current contour is within the y_threshold of the current line
+        if abs(bbox[1] - current_line_y) <= y_threshold:
+            current_line.append((contour, bbox))
+        else:
+            # Sort the completed line by x-coordinate
+            current_line.sort(key=lambda item: item[1][0]) # item[1][0] is the x-coordinate
+            sorted_contours.extend([item[0] for item in current_line]) # Add sorted contours to the final list
+
+            # Start a new line
+            current_line = [(contour, bbox)]
+            current_line_y = bbox[1]
+
+    # Sort and add the last line
+    current_line.sort(key=lambda item: item[1][0])
+    sorted_contours.extend([item[0] for item in current_line])
+
+    return sorted_contours, [cv2.boundingRect(c) for c in sorted_contours] # Return sorted contours and their new bounding boxes
+
+
 def extract_digits(image):
     if rotate != 0:
 	    image = imutils.rotate_bound(image, rotate)
     
-    image_bw = cv2.threshold(image, 127, 255, cv2.THRESH_BINARY)[1]
+    image_bw = cv2.threshold(image, 64, 255, cv2.THRESH_BINARY)[1]
     image_bw_total_one = cv2.countNonZero(image_bw)
     img_height, img_width = image_bw.shape
     image_bw_percentage = image_bw_total_one / (img_height * img_width)
@@ -217,7 +256,7 @@ def extract_digits(image):
             y2 += border
         if DBG_LEVEL & 1:
             image_w_bbox = cv2.rectangle(image_bw,(x, y),(x2, y2),(128, 128, 128),2)
-            cv2.imshow('Image', imutils.resize(image_w_bbox, height=1024))
+            cv2.imshow('Contour', imutils.resize(image_w_bbox, height=1024))
             cv2.waitKey(0)
             cv2.destroyAllWindows()
         image = image[y:y+h + border, x:x+w + border]
@@ -229,7 +268,8 @@ def extract_digits(image):
         cv2.destroyAllWindows()
 
     image_blurred = cv2.GaussianBlur(image_resize, (5, 5), 0)
-    image_edged = cv2.Canny(image_blurred, 50, 200, 255)
+    #image_edged = cv2.Canny(image_blurred, 65, 200, 255)
+    image_edged = cv2.Canny(image_blurred, 1, 200, 255)
     if DBG_LEVEL & 1:
         cv2.imshow('Edged', image_edged) 
         cv2.waitKey(0)
@@ -275,7 +315,7 @@ def extract_digits(image):
         # Apply the linear transformation: new_image = alpha * original_image + beta
         image_resized = cv2.convertScaleAbs(image_resized, alpha=alpha, beta=beta)
         if DBG_LEVEL & 2:
-            cv2.imshow('Brightness', image_resized) 
+            cv2.imshow('Brightness', imutils.resize(image_resized, 256))
             cv2.waitKey(0)
             cv2.destroyAllWindows()
 
@@ -283,7 +323,7 @@ def extract_digits(image):
         # operations to cleanup the thresholded image
         image_thresh = cv2.threshold(image_resized, 127, 255, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)[1]
         if DBG_LEVEL & 2:
-            cv2.imshow('Thresh', image_thresh)
+            cv2.imshow('Thresh', imutils.resize(image_thresh, 256))
             cv2.waitKey(0)
             cv2.destroyAllWindows()
         # kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (1, 5))
@@ -297,7 +337,7 @@ def extract_digits(image):
         image_dilation = cv2.dilate(image_thresh, kernel, iterations = 1)
         image_erosion = cv2.erode(image_dilation, kernel, iterations = 1)
         if DBG_LEVEL & 2:
-            cv2.imshow('Erosion', image_erosion) 
+            cv2.imshow('Erosion', imutils.resize(image_erosion, 256))
             cv2.waitKey(0)
             cv2.destroyAllWindows()
 
@@ -333,10 +373,12 @@ def extract_digits(image):
     if len(digitCnts) <= 0:
         return ERR_NORECT, 0.0
 
-    digitCnts = sort_contours(digitCnts, method="left-to-right")[0]
+    #digitCnts = sort_contours(digitCnts, method="left-to-right")[0]
+    y_sorted_contours, y_sorted_bboxes = sort_contours_top_to_bottom(digitCnts)
+    final_sorted_contours, final_sorted_bboxes = sort_contours_left_to_right_within_lines(y_sorted_contours, y_sorted_bboxes)
     digits = []
     # loop over each of the digits
-    for c in digitCnts:
+    for c in final_sorted_contours:
         # extract the digit ROI
         (x, y, w, h) = cv2.boundingRect(c)
 
@@ -346,7 +388,7 @@ def extract_digits(image):
 
         roi = image_erosion[y:y + h, x:x + w]
         if DBG_LEVEL & 4:
-            cv2.imshow('Digit', roi)
+            cv2.imshow('Digit', imutils.resize(roi, 256))
             cv2.waitKey(0)
             cv2.destroyAllWindows()
 
@@ -362,7 +404,7 @@ def extract_digits(image):
             ((w - dW - 2, 0), (w, h // 2)), 			 # top-right
             ((0, (h // 2) - dHC), (w, (h // 2) + dHC)),  # center
             ((0, h // 2), (dW, h)),						 # bottom-left
-            ((w - dW*2, h // 2), (w - 2, h)),		     # bottom-right
+            ((w - dW*2 + 2, h // 2), (w - 2, h)),	     # bottom-right
             ((0, h - dH), (w, h))					     # bottom
         ]
 
@@ -372,10 +414,6 @@ def extract_digits(image):
             # extract the segment ROI, count the total number of thresholded pixels
             # in the segment, and then compute the area of the segment
             segROI = roi[yA:yB, xA:xB]
-            if DBG_LEVEL & 4:
-                cv2.imshow('Digit Boxed', segROI)
-                cv2.waitKey(0)
-                cv2.destroyAllWindows()
 
             total = cv2.countNonZero(segROI)
             area = (xB - xA) * (yB - yA)
@@ -383,7 +421,17 @@ def extract_digits(image):
             # 50% of the area, mark the segment as "on"
             if area > 0.0 and (total / float(area)) > 0.4:
                 on[i]= 1
+
+            if DBG_LEVEL & 4:
+                roi_w_bbox = cv2.rectangle(roi.copy(),(xA, yA),(xB, yB),(128, 128, 128),1)
+                print(f"Segment {i+1}: {on[i]}")
+                cv2.imshow(f"Segment {i+1}: {on[i]}", imutils.resize(roi_w_bbox, 256))
+                cv2.waitKey(0)
+                cv2.destroyAllWindows()
+
         # lookup the digit
+        if DBG_LEVEL & 4:
+            print(on)
         try:
             digit = DIGITS_LOOKUP[tuple(on)]
             digits.append(digit)
@@ -391,6 +439,9 @@ def extract_digits(image):
             if DBG_LEVEL & 4:
                 print("Un-expected digit loopkup")
             return ERR_NODIGIT, 0.0
+
+        if len(digits) == 3:
+            break
 
     if len(digits) == 3:
         ph = (digits[0] * 100 + digits[1] * 10 + digits[2]) / 100.0
