@@ -121,7 +121,7 @@ DIGITS_LOOKUP = {
 }
 
 ERR_SUCCESS = 0
-ERR_NOLCD = -1
+ERR_LCDOFF = -1
 ERR_NODIGITS = -2
 ERR_NODIGIT = -3
 ERR_NORECT = -4
@@ -218,14 +218,12 @@ def sort_contours_left_to_right_within_lines(contours, bounding_boxes, y_thresho
     return sorted_contours, [cv2.boundingRect(c) for c in sorted_contours] # Return sorted contours and their new bounding boxes
 
 
-def extract_digits(image):
+def extract_digits_once(image, threshold_val = 64, blurr_val = 5):
     if rotate != 0:
 	    image = imutils.rotate_bound(image, rotate)
-    
-    image_bw = cv2.threshold(image, 127, 255, cv2.THRESH_BINARY)[1]
-    image_bw_total_one = cv2.countNonZero(image_bw)
+
+    image_bw = cv2.threshold(image, threshold_val, 255, cv2.THRESH_BINARY)[1]
     img_height, img_width = image_bw.shape
-    image_bw_percentage = image_bw_total_one / (img_height * img_width)
     contours, _ = cv2.findContours(image_bw, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if contours:
         largest_contour = max(contours, key=cv2.contourArea)
@@ -267,8 +265,8 @@ def extract_digits(image):
         cv2.waitKey(0)
         cv2.destroyAllWindows()
 
-    image_blurred = cv2.GaussianBlur(image_resize, (5, 5), 0)
-    image_edged = cv2.Canny(image_blurred, 65, 200, 255)
+    image_blurred = cv2.GaussianBlur(image_resize, (blurr_val, blurr_val), 0)
+    image_edged = cv2.Canny(image_blurred, 50, 200, 255)
     if DBG_LEVEL & 1:
         cv2.imshow('Edged', image_edged) 
         cv2.waitKey(0)
@@ -287,12 +285,8 @@ def extract_digits(image):
             displayCnt = approx
             break;
 
-    if displayCnt is None or image_bw_percentage <= 0.02:
-        #
-        # Did not detected a rectangle or the percentage of white is lesser than 2%
-        if image_bw_percentage <= 0.02:
-            return ERR_NOLCD, 0.0
-        return ERR_NOSCREEN_DETECTED
+    if displayCnt is None:
+        return ERR_NOSCREEN_DETECTED, 0.0
 
     image_warped = four_point_transform(image_resize, displayCnt.reshape(4, 2))
     if DBG_LEVEL & 1:
@@ -451,6 +445,23 @@ def extract_digits(image):
         print(digits)
     return ERR_NODIGITS, 0.0
 
+
+def extract_digits(image_gray):
+    rc, ph = extract_digits_once(image_gray)
+    if rc != ERR_SUCCESS:
+        rc, ph = extract_digits_once(image_gray, 127, 7)
+    if rc != ERR_SUCCESS:
+        #
+        # Adjust exposure
+        alpha = 6.185
+        beta = -0.5
+        image_exposure = cv2.convertScaleAbs(image_gray, alpha=alpha, beta=beta)
+
+        rc, ph = extract_digits_once(image_exposure)
+
+    return rc, ph          
+
+
 if PICAM:
     picam2 = None
 
@@ -473,11 +484,23 @@ def get_camera_image():
     if first_image:
         time.sleep(2)
         first_image = 0
-    image = picam2.capture_array("main")
+    image1 = picam2.capture_array("main")
+    time.sleep(0.2)
+    image2 = picam2.capture_array("main")
+    time.sleep(0.2)
+    image3 = picam2.capture_array("main")
+    time.sleep(0.2)
+    image4 = picam2.capture_array("main")
+    time.sleep(0.2)
+    image5 = picam2.capture_array("main")
     picam2.stop()
-    image_cv = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    image1_gray = cv2.cvtColor(image1, cv2.COLOR_BGR2GRAY)
+    image2_gray = cv2.cvtColor(image2, cv2.COLOR_BGR2GRAY)
+    image3_gray = cv2.cvtColor(image3, cv2.COLOR_BGR2GRAY)
+    image4_gray = cv2.cvtColor(image4, cv2.COLOR_BGR2GRAY)
+    image5_gray = cv2.cvtColor(image5, cv2.COLOR_BGR2GRAY)
 
-    return image_cv
+    return [image1_gray, image2_gray, image3_gray, image4_gray, image5_gray]
 
 def get_file_image(file_name):
     if not os.path.exists(file_name):
@@ -580,6 +603,28 @@ def gpio_get_alarm():
         return True
     return False
 
+
+def is_lcd_off(images):
+    lcd_off = True
+    image_most = None
+    image_percent = 0
+    
+    for image in images:
+        if image is None:
+            continue
+        image_bw = cv2.threshold(image, 32, 255, cv2.THRESH_BINARY)[1]
+        image_bw_total_one = cv2.countNonZero(image_bw)
+        img_height, img_width = image_bw.shape
+        image_bw_percentage = image_bw_total_one / (img_height * img_width)
+        if image_bw_percentage > 0.01:
+            lcd_off = False
+        if image_bw_percentage > image_percent:
+            image_most = image
+            image_percent = image_bw_percentage
+
+    return lcd_off, image_most
+
+
 def selftest():
     directory_path = "test-images"
     total = 0
@@ -655,63 +700,49 @@ if __name__ == "__main__":
                     if gpio_get_pwr() == False:
                         # No power to pH controller
                         print("Power: Off")
-                        rc = ERR_NOLCD
+                        rc = ERR_LCDOFF
                     else:
                         print(f"Power: On")
                 if gpio_alarm_configured():
                     alarm = gpio_get_alarm()
             if rc == ERR_SUCCESS:
-                image = get_camera_image()
-
-        if rc == ERR_SUCCESS:
-            for i in range(3):
-
-                try:
-                    rc, ph = extract_digits(image)
-
-                except Exception as e:
-                    rc = ERR_NODIGITS
+                images = get_camera_image()
+                ret, image = is_lcd_off(images)
+                if ret == True:
+                    rc = ERR_LCDOFF
                     ph = 0.0
 
-                if rc == ERR_SUCCESS:
-                    now = datetime.now()
-                    print(now.strftime("%H:%M:%S: "), end="")
-                    print(ph, flush=True)
-                    break;
-
-                save_image = False
-                if rc == ERR_NOLCD and i == 2:
-                    print("LCD is OFF", flush=True)
-                if rc == ERR_NODIGITS and i == 2:
+        if rc == ERR_SUCCESS:
+            rc, ph = extract_digits(image)
+            if rc == ERR_SUCCESS:
+                now = datetime.now()
+                print(now.strftime("%H:%M:%S: "), end="")
+                print(ph, flush=True)
+            else:
+                if rc == ERR_NODIGITS:
                     print("Not enough digits on LCD", flush=True)
-                    save_image = True
-                if rc == ERR_NODIGIT and i == 2:
+                if rc == ERR_NODIGIT:
                     print("Not enough digit on LCD", flush=True)
-                    save_image = True
-                if rc == ERR_NORECT and i == 2:
+                if rc == ERR_NORECT:
                     print("No digit on LCD", flush=True)
-                    save_image = True
-                if rc == ERR_NOSCREEN_DETECTED and i == 2:
+                if rc == ERR_NOSCREEN_DETECTED:
                     print("No screen detected", flush=True)
-                    save_image = True
-
-                if save_image and len(save_filename) > 0 and image is not None:
+            
+                if len(save_filename) > 0 and image is not None:
                     cv2.imwrite(save_filename, image)
 
-        if rc == ERR_NOLCD:
-            # Unit is off, change alarm to False
-            alarm = False
-
         if mqtt_pub:
-            if alarm == False:
-                if rc == ERR_SUCCESS or rc == ERR_NOLCD:
+            if rc == ERR_LCDOFF:
+                mqtt_publish("aqualinkd/CHEM/pH/set", f"0.0")
+            else:
+                if alarm:
+                    mqtt_publish("aqualinkd/CHEM/pH/set", f"1.0")
+                elif rc == ERR_SUCCESS:
                     mqtt_publish("aqualinkd/CHEM/pH/set", f"{ph:.2f}")
                 else:
                     mqtt_publish("aqualinkd/CHEM/pH/set", f"2.0")
-            else:
-                 mqtt_publish("aqualinkd/CHEM/pH/set", f"1.0")
 
-        if rc == ERR_NOLCD:
+        if rc == ERR_LCDOFF:
             # When there is no LCD, this implies that the unit is off.
             # As such, sleep longer
             time.sleep(10.0)
@@ -720,4 +751,3 @@ if __name__ == "__main__":
 
     if mqtt_pub:
         mqtt_close()
-
