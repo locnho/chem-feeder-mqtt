@@ -222,7 +222,7 @@ def extract_digits(image):
     if rotate != 0:
 	    image = imutils.rotate_bound(image, rotate)
     
-    image_bw = cv2.threshold(image, 64, 255, cv2.THRESH_BINARY)[1]
+    image_bw = cv2.threshold(image, 127, 255, cv2.THRESH_BINARY)[1]
     image_bw_total_one = cv2.countNonZero(image_bw)
     img_height, img_width = image_bw.shape
     image_bw_percentage = image_bw_total_one / (img_height * img_width)
@@ -268,8 +268,7 @@ def extract_digits(image):
         cv2.destroyAllWindows()
 
     image_blurred = cv2.GaussianBlur(image_resize, (5, 5), 0)
-    #image_edged = cv2.Canny(image_blurred, 65, 200, 255)
-    image_edged = cv2.Canny(image_blurred, 1, 200, 255)
+    image_edged = cv2.Canny(image_blurred, 65, 200, 255)
     if DBG_LEVEL & 1:
         cv2.imshow('Edged', image_edged) 
         cv2.waitKey(0)
