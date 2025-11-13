@@ -128,6 +128,22 @@ To run a regression testing with all images in folder test-images with first 3 l
     PASSED 17/17
 ```
 
+# Background on the Overall Algorithm
+
+The general idea is:
+
+1. Capture 5 images for 1 second
+2. Using these 5 images, determine if the LCD is ON or OFF. This is for the case where the LCD is flashing due to alarm.
+3. If it is OFF, report 1.0 and stop
+4. Using the image with most white color pixel, determine the LCD location and crop 100 pixel border all around
+5. Determine the contour of the LCD using OpenCV
+6. Scale the image to 512 pixel and transpose the LCD image into a rectangle using OpenCV
+7. Scale the image to 128 pixel and determine all the LCD digits using OpenCV
+8. For each LCD digits, determine whether each segment is ON (white) or OFF (black). Then decode the digit from these on/off segment.
+9. If the operation failed to determine the digits or transpose, adjust the black and white binary mapping threshold and try again.
+10. If the operation failed to determine the digits, adjust the exposure and try again.
+11. Final, try a second time if it failed before report 2.0 for error decode the digit. 
+
 # Misc Note
 
 If your camera is mounted at a different direction, use the "-r" parameter to rotate.
