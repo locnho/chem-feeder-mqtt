@@ -688,48 +688,56 @@ if __name__ == "__main__":
 
     while True:
 
-        rc = ERR_SUCCESS
-        alarm = False
-        ph = 0.0
-        image = None
-        if len(file_name) > 0:
-            image = get_file_image(file_name)
-        else:
-            if RPIGPIO and use_gpio:
-                if gpio_pwr_configured():
-                    if gpio_get_pwr() == False:
-                        # No power to pH controller
-                        print("Power: Off")
+        #
+        # Try 2 time before report to MQTT
+        for retry in range(2):
+            rc = ERR_SUCCESS
+            alarm = False
+            ph = 0.0
+            image = None
+            if len(file_name) > 0:
+                image = get_file_image(file_name)
+            else:
+                if RPIGPIO and use_gpio:
+                    if gpio_pwr_configured():
+                        if gpio_get_pwr() == False:
+                            # No power to pH controller
+                            print("Power: Off")
+                            rc = ERR_LCDOFF
+                        else:
+                            print(f"Power: On")
+                    if gpio_alarm_configured():
+                        alarm = gpio_get_alarm()
+                if rc == ERR_SUCCESS:
+                    images = get_camera_image()
+                    ret, image = is_lcd_off(images)
+                    if ret == True:
                         rc = ERR_LCDOFF
-                    else:
-                        print(f"Power: On")
-                if gpio_alarm_configured():
-                    alarm = gpio_get_alarm()
-            if rc == ERR_SUCCESS:
-                images = get_camera_image()
-                ret, image = is_lcd_off(images)
-                if ret == True:
-                    rc = ERR_LCDOFF
-                    ph = 0.0
+                        ph = 0.0
+            
+            if rc != ERR_SUCCESS:
+                # 
+                # Break if LCD is off or unit is powered off
+                break
 
-        if rc == ERR_SUCCESS:
             rc, ph = extract_digits(image)
             if rc == ERR_SUCCESS:
                 now = datetime.now()
-                print(now.strftime("%H:%M:%S: "), end="")
+                print(now.strftime("%H:%M:%S: pH "), end="")
                 print(ph, flush=True)
-            else:
-                if rc == ERR_NODIGITS:
-                    print("Not enough digits on LCD", flush=True)
-                if rc == ERR_NODIGIT:
-                    print("Not enough digit on LCD", flush=True)
-                if rc == ERR_NORECT:
-                    print("No digit on LCD", flush=True)
-                if rc == ERR_NOSCREEN_DETECTED:
-                    print("No screen detected", flush=True)
-            
-                if len(save_filename) > 0 and image is not None:
-                    cv2.imwrite(save_filename, image)
+                break
+
+            if rc == ERR_NODIGITS:
+                print("Not enough digits on LCD", flush=True)
+            if rc == ERR_NODIGIT:
+                print("Not enough digit on LCD", flush=True)
+            if rc == ERR_NORECT:
+                print("No digit on LCD", flush=True)
+            if rc == ERR_NOSCREEN_DETECTED:
+                print("No screen detected", flush=True)
+        
+            if len(save_filename) > 0 and image is not None:
+                cv2.imwrite(save_filename, image)
 
         if mqtt_pub:
             if rc == ERR_LCDOFF:
@@ -745,9 +753,9 @@ if __name__ == "__main__":
         if rc == ERR_LCDOFF:
             # When there is no LCD, this implies that the unit is off.
             # As such, sleep longer
-            time.sleep(10.0)
+            time.sleep(15.0)
         else:
-            time.sleep(5.0)
+            time.sleep(10.0)
 
     if mqtt_pub:
         mqtt_close()
