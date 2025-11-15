@@ -4,9 +4,18 @@ import imutils
 import numpy as np
 import pytesseract
 import time
-import paho.mqtt.client as mqtt
 import os
-from datetime import datetime
+import csv
+import paho.mqtt.client as mqtt
+from datetime import datetime, timedelta
+from dateutil.relativedelta import relativedelta
+import pandas as pd
+
+import threading
+from http.server import HTTPServer, SimpleHTTPRequestHandler
+import plotly.express as px
+import plotly.io as pio
+
 
 PICAM = 1           # Set to 1 to support RPI Camera, otherise, use the -f argument
 RPIGPIO = 1         # Set to 1 to support GPIO pin below. Must include the --gpio argument as well
@@ -141,6 +150,8 @@ save_filename = ""
 first_image = 1
 use_gpio = 0
 self_test = False
+log_filename = ""
+log_data = pd.DataFrame(columns=['Date', 'pH'])
 
 def app_parser_arguments():
     global file_name
@@ -153,6 +164,7 @@ def app_parser_arguments():
     global save_filename
     global use_gpio
     global self_test
+    global log_filename
 
     parser = argparse.ArgumentParser(description='Chem Feeder MQTT')
     parser.add_argument('-f','--file', help='Input image file', default = "")
@@ -165,6 +177,7 @@ def app_parser_arguments():
     parser.add_argument('--save', type=str, help='If provided and detection failure, save capture image to file', default="")
     parser.add_argument('--gpio', action="store_true", help="Enable GPIO for power/alarm detection")
     parser.add_argument('--selftest', action="store_true", help="Run self-test and exit", default = False)
+    parser.add_argument('--datalog', type=str, help="File name for pH data logging/web site", default = "")
 
     args = parser.parse_args()
     file_name = args.file
@@ -177,6 +190,7 @@ def app_parser_arguments():
     save_filename = args.save
     use_gpio = args.gpio
     self_test = args.selftest
+    log_filename= args.datalog
 
 
 def sort_contours_top_to_bottom(contours):
@@ -650,6 +664,202 @@ def selftest():
     else:
         print(f"FAILED {failed}/{total}")
 
+
+date_format_string = "%Y-%m-%d %H:%M:%S.%f"
+log_data_last_rotate = None
+log_data_last_saved = None
+log_data_dirty = True
+
+def log_data_init():
+    global log_data_last_rotate
+    global log_data
+
+    log_data_last_rotate = datetime.now()
+
+    try:
+        log_data = pd.read_csv(log_filename)
+        log_data['Date'] = pd.to_datetime(log_data['Date'], format=date_format_string)
+
+    except FileNotFoundError:
+        return
+
+    except Exception as e:
+        print(f"Unable to open log file {log_filename} error: {e}")                
+
+
+def log_data_save():
+    global log_data_last_saved
+    global log_data_dirty
+
+    if log_data_last_saved is not None:
+        time_elapsed = datetime.now() - log_data_last_saved
+        if time_elapsed < timedelta(hours=1):
+            return 
+
+    if log_data_dirty == False:
+        return
+
+    log_data_last_saved = datetime.now()
+    log_data_dirty = False
+
+    directory, filename = os.path.split(log_filename)
+    os.makedirs(directory, exist_ok=True)
+
+    try:
+        log_data.to_csv(log_filename, index=False)
+
+    except FileNotFoundError:
+        return
+
+    except Exception as e:
+        print(f"Unable to open log file {log_filename} error: {e}")                
+
+
+def log_data_rotate():
+    global log_data
+
+    time_elapsed = datetime.now() - log_data_last_rotate
+    if time_elapsed < timedelta(hours=24):
+        return
+
+    #
+    # Remove date over a year
+    date_object = log_data.iloc[-1, 0]
+    date_object -= relativedelta(years=1)
+
+    to_delete = 0
+    for i in range(len(log_data)):
+        date_row = log_data.iloc[i, 0]
+        if date_row <= date_object:
+            to_delete += 1
+        else:
+            break
+    
+    if to_delete > 0:
+        log_data.drop(index=df.index[:to_delete], axis=0, inplace=True)
+
+
+def are_almost_equal(a, b, tolerance=1e-9):
+    return abs(a - b) < tolerance
+
+
+WEB_PORT = 8025
+httpd = None
+server_thread = None
+
+class DataHandler(SimpleHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == '/' or self.path == '/phall':
+          try:
+            self.send_response(200)
+            self.send_header("Content-type", "text/html")
+            self.end_headers()
+            html_str = """
+            <!DOCTYPE html>
+              <html lang="en">
+                <head>
+                  <meta charset="utf-8">
+                  <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fix=no">
+                  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@4.0.0/dist/css/bootstrap.min.css" integrity="sha384-Gn5384xqQ1aoWXA+058RXPxPg6fy4IWvTNh0E263XmFcJlSAwiGgFAW/dAiS6JXm" crossorigin="anonymous">
+                  <title>Chem Feeder pH</title>
+                  <style>
+                  .nav-link:hover {
+                    color: white !important;
+                  }
+                  </style>
+                </head>
+                <body>
+            """
+            self.wfile.write(bytes(html_str, "utf-8"))
+            if self.path == '/phall':
+                html_str = """
+                    <nav class="navbar navbar-expand-md navbar-light bg-primary">
+                        <div class="navbar-collapse collapse w-100 order-1 order-md-0 dual-collapse2">
+                            <ul class="navbar-nav mr-auto">
+                            </ul>
+                        </div>
+                        <div class="mx-auto order-0">
+                            <a class="navbar-brand" style="color: white">Chem Feeder pH Values</a>
+                        </div>
+                        <div class="navbar-collapse collapse w-100 order-3 daul-collapse2">
+                            <ul class="navbar-nav ml-auto">
+                                <li class="nav-item">
+                                    <a class="nav-link" href="/">pH Zoom Range</a>
+                                </li>
+                            </ul>
+                        </div>
+                    </nav>    
+                 """
+                self.wfile.write(bytes(html_str, "utf-8"))
+                self.wfile.write(bytes(create_html_ph_graph("pH Values", 0, 8), "utf-8"))
+            else:
+                html_str = """
+                    <nav class="navbar navbar-expand-md navbar-light bg-primary">
+                        <div class="navbar-collapse collapse w-100 order-1 order-md-0 dual-collapse2">
+                            <ul class="navbar-nav mr-auto">
+                            </ul>
+                        </div>
+                        <div class="mx-auto order-0">
+                            <a class="navbar-brand" style="color: white">Chem Feeder pH Values</a>
+                        </div>
+                        <div class="navbar-collapse collapse w-100 order-3 daul-collapse2">
+                            <ul class="navbar-nav ml-auto">
+                                <li class="nav-item">
+                                    <a class="nav-link" href="/phall">pH Full Range</a>
+                                </li>
+                            </ul>
+                        </div>
+                    </nav>    
+                 """
+                self.wfile.write(bytes(html_str, "utf-8"))
+                self.wfile.write(bytes(create_html_ph_graph("pH Values", 7, 8), "utf-8"))
+            self.wfile.write(b"</body></html>")
+
+          except Exception as e:
+            return
+        else:
+            super().do_GET()
+
+def start_server_ph():
+    global httpd
+    global server_thread
+    
+    httpd = HTTPServer(("", WEB_PORT), DataHandler)
+    server_thread = threading.Thread(target=httpd.serve_forever)
+    server_thread.daemon = True
+    server_thread.start()
+    print(f"Serving at port {WEB_PORT}")
+
+def create_html_ph_graph(title, v_min, v_max):
+    df = log_data.copy()
+    df.rename(columns={'Date':'Date-Str'}, inplace=True)
+    df['Date'] = pd.to_datetime(df['Date-Str'])
+    fig = px.line(df, x="Date", y="pH", title=title)
+    fig.update_layout(
+        yaxis_range=[v_min, v_max],
+        title=None,
+        height=500
+    )
+    fig.update_xaxes(
+        rangeslider_visible=True,
+        rangeselector=dict(
+            buttons=list([
+                dict(count=7, label="1w", step="day", stepmode="backward"),
+                dict(count=14, label="2w", step="day", stepmode="backward"),
+                dict(count=1, label="1m", step="month", stepmode="backward"),
+                dict(count=3, label="3m", step="month", stepmode="backward"),
+                dict(count=6, label="6m", step="month", stepmode="backward"),
+                dict(step="all")
+            ])
+         ),
+        tickformatstops = [
+            dict(dtickrange=[None, 60000], value="%H:%M:%S"),
+            dict(dtickrange=[60000, 3600000], value="%H:%M"),
+            dict(dtickrange=[3600000, None], value="%b %d %H:%M")
+        ]
+    )
+    return pio.to_html(fig, full_html=False, include_plotlyjs='cdn')
+
 # Detect Alarm
 # try:
 #     image = Image.open(args.file)
@@ -675,6 +885,9 @@ if __name__ == "__main__":
     else:
         print(f"Using image from camera", flush=True)
 
+    if len(log_filename) > 0:
+        log_data_init()
+
     if mqtt_pub:
         mqtt_init()
 
@@ -685,6 +898,8 @@ if __name__ == "__main__":
     if RPIGPIO and use_gpio:
         import RPi.GPIO as GPIO
         gpio_init()
+
+    start_server_ph()
 
     while True:
 
@@ -723,7 +938,7 @@ if __name__ == "__main__":
             rc, ph = extract_digits(image)
             if rc == ERR_SUCCESS:
                 now = datetime.now()
-                print(now.strftime("%H:%M:%S: pH "), end="")
+                print(now.strftime("%H:%M:%S: "), end="")
                 print(ph, flush=True)
                 break
 
@@ -739,23 +954,47 @@ if __name__ == "__main__":
             if len(save_filename) > 0 and image is not None:
                 cv2.imwrite(save_filename, image)
 
+        # Compute pH value
+        if rc == ERR_LCDOFF:
+            ph = 0.0
+        else:
+            if alarm:
+                ph = 1.0
+            elif rc != ERR_SUCCESS:
+                ph = 2.0
+
         if mqtt_pub:
-            if rc == ERR_LCDOFF:
-                mqtt_publish("aqualinkd/CHEM/pH/set", f"0.0")
-            else:
-                if alarm:
-                    mqtt_publish("aqualinkd/CHEM/pH/set", f"1.0")
-                elif rc == ERR_SUCCESS:
-                    mqtt_publish("aqualinkd/CHEM/pH/set", f"{ph:.2f}")
-                else:
-                    mqtt_publish("aqualinkd/CHEM/pH/set", f"2.0")
+            mqtt_publish("aqualinkd/CHEM/pH/set", f"{ph:.2f}")
+
+        if len(log_filename) > 0:
+            #
+            # Rotate data first
+            log_data_rotate()
+
+            #
+            # Log data
+            row = { "Date" : datetime.now(), "pH" : ph }
+            if log_data.shape[0] == 0 or ph != 0.0:
+                log_data.loc[len(log_data)] = row
+                log_data_dirty = True
+            elif not are_almost_equal(log_data.iloc[-1, 1], ph):
+                log_data.loc[len(log_data)] = row
+                log_data_dirty = True
+
+            #
+            # Save data every hour or first one
+            log_data_save()
 
         if rc == ERR_LCDOFF:
             # When there is no LCD, this implies that the unit is off.
             # As such, sleep longer
-            time.sleep(15.0)
-        else:
             time.sleep(10.0)
+        else:
+            time.sleep(5.0)
 
     if mqtt_pub:
         mqtt_close()
+
+    httpd.shutdown()
+    server_thread.join()
+
