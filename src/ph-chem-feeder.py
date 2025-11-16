@@ -2,7 +2,7 @@ import argparse
 import cv2
 import imutils
 import numpy as np
-import pytesseract
+#import pytesseract
 import time
 import os
 import csv
@@ -12,9 +12,8 @@ from dateutil.relativedelta import relativedelta
 import pandas as pd
 
 import threading
-from http.server import HTTPServer, SimpleHTTPRequestHandler
+from http.server import SimpleHTTPRequestHandler
 import socketserver
-import plotly.express as px
 import plotly.io as pio
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
@@ -620,7 +619,8 @@ def is_lcd_off(images):
     lcd_off = True
     image_most = None
     image_percent = 0
-    
+    image_list = []
+
     for image in images:
         if image is None:
             continue
@@ -630,11 +630,12 @@ def is_lcd_off(images):
         image_bw_percentage = image_bw_total_one / (img_height * img_width)
         if image_bw_percentage > 0.01:
             lcd_off = False
+            image_list.append(image)
         if image_bw_percentage > image_percent:
             image_most = image
             image_percent = image_bw_percentage
 
-    return lcd_off, image_most
+    return lcd_off, image_list
 
 
 def selftest():
@@ -989,7 +990,7 @@ if __name__ == "__main__":
             ph = 0.0
             image = None
             if len(file_name) > 0:
-                image = get_file_image(file_name)
+                images = [get_file_image(file_name)]
             else:
                 if RPIGPIO and use_gpio:
                     if gpio_pwr_configured():
@@ -1002,8 +1003,8 @@ if __name__ == "__main__":
                     if gpio_alarm_configured():
                         alarm = gpio_get_alarm()
                 if rc == ERR_SUCCESS:
-                    images = get_camera_image()
-                    ret, image = is_lcd_off(images)
+                    image_list = get_camera_image()
+                    ret, images = is_lcd_off(image_list)
                     if ret == True:
                         rc = ERR_LCDOFF
                         ph = 0.0
