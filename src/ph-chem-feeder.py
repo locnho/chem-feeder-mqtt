@@ -16,6 +16,8 @@ from http.server import HTTPServer, SimpleHTTPRequestHandler
 import socketserver
 import plotly.express as px
 import plotly.io as pio
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
 
 PICAM = 1           # Set to 1 to support RPI Camera, otherise, use the -f argument
@@ -152,7 +154,7 @@ first_image = 1
 use_gpio = 0
 self_test = False
 log_filename = ""
-log_data = pd.DataFrame(columns=['Date', 'pH'])
+log_data = pd.DataFrame(columns=['Date', 'pH', 'Alarm'])
 
 def app_parser_arguments():
     global file_name
@@ -499,23 +501,18 @@ def get_camera_image():
     if first_image:
         time.sleep(2)
         first_image = 0
-    image1 = picam2.capture_array("main")
-    time.sleep(0.2)
-    image2 = picam2.capture_array("main")
-    time.sleep(0.2)
-    image3 = picam2.capture_array("main")
-    time.sleep(0.2)
-    image4 = picam2.capture_array("main")
-    time.sleep(0.2)
-    image5 = picam2.capture_array("main")
+    images = []
+    for i in range(20):
+        image = picam2.capture_array("main")
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        images.append(image)
+        if i % 2 == 0:
+            time.sleep(0.05)
+        else:
+            time.sleep(0.05)
     picam2.stop()
-    image1_gray = cv2.cvtColor(image1, cv2.COLOR_BGR2GRAY)
-    image2_gray = cv2.cvtColor(image2, cv2.COLOR_BGR2GRAY)
-    image3_gray = cv2.cvtColor(image3, cv2.COLOR_BGR2GRAY)
-    image4_gray = cv2.cvtColor(image4, cv2.COLOR_BGR2GRAY)
-    image5_gray = cv2.cvtColor(image5, cv2.COLOR_BGR2GRAY)
 
-    return [image1_gray, image2_gray, image3_gray, image4_gray, image5_gray]
+    return images
 
 def get_file_image(file_name):
     if not os.path.exists(file_name):
@@ -749,7 +746,8 @@ def log_data_save():
     #
     # Remove back up as we successful wrote the data file
     try:
-        os.remove(backup_filename)
+        if os.path.exists(backup_filename):
+            os.remove(backup_filename)
     finally:
         fail = 1
 
@@ -889,11 +887,34 @@ def create_html_ph_graph(title, v_min, v_max):
     df = log_data.copy()
     df.rename(columns={'Date':'Date-Str'}, inplace=True)
     df['Date'] = pd.to_datetime(df['Date-Str'])
-    fig = px.line(df, x="Date", y="pH", title=title)
+    # Create figure with secondary y-axis
+    fig = make_subplots(specs=[[{"secondary_y": True}]])
+    # Add traces
+    fig.add_trace(go.Scatter(x=df['Date'], y=df['pH'], mode='lines', name="pH"),
+                  secondary_y=False)
+    fig.add_trace(go.Scatter(x=df['Date'], y=df['Alarm'], mode='lines', name="Alarm"),
+                  secondary_y=True)
     fig.update_layout(
-        yaxis_range=[v_min, v_max],
-        title=None,
-        height=500
+        height=500,
+        xaxis=dict(
+            title_text="Date"
+            ),
+        yaxis=dict(
+            title_text="<b>pH</b>",
+            range=[v_min,v_max]
+            ),
+        yaxis2=dict(
+            title_text="<b>Alarm</b>",
+            showgrid=False,
+            showticklabels=True,
+            #domain=[0, 1],
+            range=[0,4],
+            anchor="x",
+            overlaying="y",
+            side="right",
+            tickvals=[1],
+            ticktext=['True']
+        )
     )
     fig.update_xaxes(
         rangeslider_visible=True,
@@ -906,7 +927,7 @@ def create_html_ph_graph(title, v_min, v_max):
                 dict(count=6, label="6m", step="month", stepmode="backward"),
                 dict(step="all")
             ])
-         ),
+        ),
         tickformatstops = [
             dict(dtickrange=[None, 60000], value="%H:%M:%S"),
             dict(dtickrange=[60000, 3600000], value="%H:%M"),
@@ -959,8 +980,10 @@ if __name__ == "__main__":
 
     while True:
         #
-        # Try 2 time before report to MQTT
-        for retry in range(2):
+        # Try 3 time before report to MQTT
+        out_loop = 0
+        for retry in range(3):
+            out_loop += 1
             rc = ERR_SUCCESS
             alarm = False
             ph = 0.0
@@ -990,30 +1013,38 @@ if __name__ == "__main__":
                 # Break if LCD is off or unit is powered off
                 break
 
-            rc, ph = extract_digits(image)
-            if rc == ERR_SUCCESS:
-                now = datetime.now()
-                print(now.strftime("%H:%M:%S: "), end="")
-                print(ph, flush=True)
-                break
+            in_loop = 0
+            for image in images:
+                in_loop += 1
+                rc, ph = extract_digits(image)
+                if rc == ERR_SUCCESS:
+                    now = datetime.now()
+                    print(now.strftime("%H:%M:%S: "), end="")
+                    print(f"pH {ph} alarm {alarm}", flush=True)
+                    break
 
-            if rc == ERR_NODIGITS:
-                print("Not enough digits on LCD", flush=True)
-            if rc == ERR_NODIGIT:
-                print("Not enough digit on LCD", flush=True)
-            if rc == ERR_NORECT:
-                print("No digit on LCD", flush=True)
-            if rc == ERR_NOSCREEN_DETECTED:
-                print("No screen detected", flush=True)
+                if rc == ERR_NODIGITS:
+                    print(f"Image{out_loop}.{in_loop}: Not enough digits on LCD", flush=True)
+                if rc == ERR_NODIGIT:
+                    print(f"Image{out_loop}.{in_loop}: Not enough digit on LCD", flush=True)
+                if rc == ERR_NORECT:
+                    print(f"Image{out_loop}.{in_loop}: No digit on LCD", flush=True)
+                if rc == ERR_NOSCREEN_DETECTED:
+                    print(f"Image{out_loop}.{in_loop}: No screen detected", flush=True)
         
-            if len(save_filename) > 0 and image is not None:
-                cv2.imwrite(save_filename, image)
+                if len(save_filename) > 0 and image is not None:
+                    directory, filename = os.path.split(save_filename)
+                    file, ext = os.path.splitext(filename)
+                    cv2.imwrite(f"{directory}{os.sep}{file}_{out_loop}{in_loop}{ext}", image)
+
+            if rc == ERR_SUCCESS:
+                break
 
         # Compute pH value
         if rc == ERR_LCDOFF:
             ph = 0.0
         else:
-            if alarm:
+            if alarm and rc != ERR_SUCCESS:
                 ph = 1.0
             elif rc != ERR_SUCCESS:
                 ph = 2.0
@@ -1028,7 +1059,11 @@ if __name__ == "__main__":
 
             #
             # Log data
-            row = { "Date" : datetime.now(), "pH" : ph }
+            if alarm:
+                alarm_val = 1
+            else:
+                alarm_val = 0
+            row = { "Date" : datetime.now(), "pH" : ph, "Alarm" : alarm }
             if log_data.shape[0] == 0 or ph != 0.0:
                 log_data.loc[len(log_data)] = row
                 log_data_dirty = True
@@ -1043,9 +1078,9 @@ if __name__ == "__main__":
         if rc == ERR_LCDOFF:
             # When there is no LCD, this implies that the unit is off.
             # As such, sleep longer
-            time.sleep(10.0)
+            time.sleep(15.0)
         else:
-            time.sleep(5.0)
+            time.sleep(10.0)
 
     if len(log_filename) > 0:
         httpd.shutdown()
