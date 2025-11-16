@@ -13,6 +13,7 @@ import pandas as pd
 
 import threading
 from http.server import HTTPServer, SimpleHTTPRequestHandler
+import socketserver
 import plotly.express as px
 import plotly.io as pio
 
@@ -691,28 +692,69 @@ def log_data_save():
     global log_data_last_saved
     global log_data_dirty
 
+    #
+    # Only save every hour
     if log_data_last_saved is not None:
         time_elapsed = datetime.now() - log_data_last_saved
         if time_elapsed < timedelta(hours=1):
             return 
-
+    
+    #
+    # Only save if data added
     if log_data_dirty == False:
         return
 
-    log_data_last_saved = datetime.now()
-    log_data_dirty = False
-
+    #
+    # Create directory if required
     directory, filename = os.path.split(log_filename)
     os.makedirs(directory, exist_ok=True)
 
+    #
+    # Remove old back up if existed
+    backup_filename = log_filename + ".bak"
+    if os.path.exists(backup_filename):
+        try:
+            os.remove(backup_filename)
+        finally:
+            fail = 1
+    
+    #
+    # Rename to bak
+    if os.path.exists(log_filename):
+        try:
+            os.rename(log_filename, backup_filename)
+        except IOError as e:
+            # Try again in future update
+            print(f"Fail to back up data file")
+            return
+    
+    #
+    # Write data
     try:
         log_data.to_csv(log_filename, index=False)
-
     except FileNotFoundError:
         return
-
     except Exception as e:
-        print(f"Unable to open log file {log_filename} error: {e}")                
+        print(f"Unable to save log file {log_filename} error: {e}")
+        #
+        # Fail to write data
+        # Remove it first before rename
+        try:
+            os.remove(log_filename)
+        finally:
+            fail = 1
+        os.rename(backup_file, log_filename)
+        return
+
+    #
+    # Remove back up as we successful wrote the data file
+    try:
+        os.remove(backup_filename)
+    finally:
+        fail = 1
+
+    log_data_last_saved = datetime.now()
+    log_data_dirty = False
 
 
 def log_data_rotate():
@@ -746,6 +788,7 @@ def are_almost_equal(a, b, tolerance=1e-9):
 WEB_PORT = 8025
 httpd = None
 server_thread = None
+server_stop_event = None
 
 class DataHandler(SimpleHTTPRequestHandler):
     def do_GET(self):
@@ -820,15 +863,27 @@ class DataHandler(SimpleHTTPRequestHandler):
         else:
             super().do_GET()
 
-def start_server_ph():
+def start_server_thread(event):
     global httpd
+
+    socketserver.TCPServer.allow_reuse_address = True
+    httpd = socketserver.TCPServer(("", WEB_PORT), DataHandler)
+    httpd.timeout = 1
+    while not event.is_set():
+        httpd.handle_request()
+    httpd.shutdown()
+
+
+def start_server_ph():
     global server_thread
+    global server_stop_event
     
-    httpd = HTTPServer(("", WEB_PORT), DataHandler)
-    server_thread = threading.Thread(target=httpd.serve_forever)
+    server_stop_event = threading.Event()
+    server_thread = threading.Thread(target=start_server_thread, args=(server_stop_event,))
     server_thread.daemon = True
     server_thread.start()
-    print(f"Serving at port {WEB_PORT}")
+    print(f"pH Data Web port {WEB_PORT}")
+
 
 def create_html_ph_graph(title, v_min, v_max):
     df = log_data.copy()
@@ -899,10 +954,10 @@ if __name__ == "__main__":
         import RPi.GPIO as GPIO
         gpio_init()
 
-    start_server_ph()
+    if len(log_filename) > 0:
+        start_server_ph()
 
     while True:
-
         #
         # Try 2 time before report to MQTT
         for retry in range(2):
@@ -992,9 +1047,11 @@ if __name__ == "__main__":
         else:
             time.sleep(5.0)
 
+    if len(log_filename) > 0:
+        httpd.shutdown()
+        server_stop_event.set()
+        server_thread.join(timeout=5)
+
     if mqtt_pub:
         mqtt_close()
-
-    httpd.shutdown()
-    server_thread.join()
 
