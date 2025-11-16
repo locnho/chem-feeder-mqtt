@@ -14,8 +14,7 @@ Description=Chem Feeder MQTT
 After=network.target
 
 [Service]
-ExecStart=/usr/bin/python3 /user/local/bin/ph-chem-feeder.py --gpio --mqtt --password <your password>
-WorkingDirectory=/home/pi/
+ExecStart=/usr/bin/python3 /user/local/bin/ph-chem-feeder.py --gpio --mqtt --password <your password> --gpio --save /home/pi/bad.jpg --datalog /home/pi/chem-data.bin
 Restart=always
 User=pi
 
