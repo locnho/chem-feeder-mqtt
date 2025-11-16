@@ -81,6 +81,26 @@ If you need more options, run with argument "--help".
 
 See scripts/chem-feeder-mqtt.service
 
+# Enable pH Data Logging and Web Page
+
+To record pH reading for view on a web page, you must enable data logging as follow:
+
+```
+python3 ph-chem-feeder.py --gpio --mqtt --password <your password> --gpio --datalog /home/pi/chem-data.bin
+
+```
+When a pH value is changed from previous value, it saved to the datalog file. The data can be view from a web page as follow:
+
+```
+http://<ip address>:8025
+
+```
+
+Below is an screen shoot of the web page.
+
+![screenshot](test-images/data-log-page.png)
+
+
 # What to do if it is not detecting digits correctly?
 
 So far, it seems to be functionaly correctly. If you need to tune for your LCD display, try the following:
