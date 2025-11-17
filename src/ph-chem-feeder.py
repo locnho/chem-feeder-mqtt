@@ -608,11 +608,11 @@ def gpio_get_pwr():
 def gpio_get_alarm():
 
     if GPIO_ALARM_PIN == 0:
-        return False
+        return 0
 
     if GPIO.input(GPIO_ALARM_PIN) == GPIO.HIGH:
-        return True
-    return False
+        return 1
+    return 0
 
 
 def is_lcd_off(images):
@@ -986,7 +986,7 @@ if __name__ == "__main__":
         for retry in range(3):
             out_loop += 1
             rc = ERR_SUCCESS
-            alarm = False
+            alarm = 0
             ph = 0.0
             image = None
             if len(file_name) > 0:
@@ -1060,10 +1060,6 @@ if __name__ == "__main__":
 
             #
             # Log data
-            if alarm:
-                alarm_val = 1
-            else:
-                alarm_val = 0
             row = { "Date" : datetime.now(), "pH" : ph, "Alarm" : alarm }
             if log_data.shape[0] == 0 or ph != 0.0:
                 log_data.loc[len(log_data)] = row
