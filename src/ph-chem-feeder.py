@@ -1019,9 +1019,6 @@ if __name__ == "__main__":
                 in_loop += 1
                 rc, ph = extract_digits(image)
                 if rc == ERR_SUCCESS:
-                    now = datetime.now()
-                    print(now.strftime("%H:%M:%S: "), end="")
-                    print(f"pH {ph} alarm {alarm}", flush=True)
                     break
 
                 if rc == ERR_NODIGITS:
@@ -1049,6 +1046,13 @@ if __name__ == "__main__":
                 ph = 1.0
             elif rc != ERR_SUCCESS:
                 ph = 2.0
+
+        if rc == ERR_LCDOFF:
+            lcd_text = "OFF"
+        else:
+            lcd_text = "ON"
+        print(datetime.now().strftime("%H:%M:%S: "), end="")
+        print(f"pH {ph} alarm {alarm} LCD {lcd_text}", flush=True)
 
         if mqtt_pub:
             mqtt_publish("aqualinkd/CHEM/pH/set", f"{ph:.2f}")
