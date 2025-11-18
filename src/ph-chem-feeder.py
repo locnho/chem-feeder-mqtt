@@ -19,10 +19,10 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 
-PICAM = 1           # Set to 1 to support RPI Camera, otherise, use the -f argument
-RPIGPIO = 1         # Set to 1 to support GPIO pin below. Must include the --gpio argument as well
-GPIO_PWR_PIN = -1    # physical GPIO board number for pH power detection (active low). Set to -1 to ignore
-GPIO_ALARM_PIN = 16 # physical GPIO board number for pH alarm detection (active low). Set to -1 to ignore
+PICAM = 1               # Set to 1 to support RPI Camera, otherise, use the -f argument
+RPIGPIO = 1             # Set to 1 to support GPIO pin below. Must include the --gpio argument as well
+GPIO_PWR_PIN = -1       # physical GPIO board number for pH power detection (active low). Set to -1 to ignore
+GPIO_ALARM_PIN = 16     # physical GPIO board number for pH alarm detection (active low). Set to -1 to ignore
 
 DBG_LEVEL = 0           # No debugging
 #DBG_LEVEL = 1          # Show image of detecting the LCD rectangle
@@ -140,20 +140,22 @@ ERR_NOSCREEN_DETECTED = -5
 
 ERR_NOMQTT = -100
 
-file_name = ""
-rotate = 0
-mqtt_pub = 0
-mqtt_username = "pi"
-mqtt_password = "password"
-mqtt_addr = "127.0.0.1"
-mqtt_port = 1883
-mqtt_connected = 0
-save_filename = ""
-first_image = 1
-use_gpio = 0
-self_test = False
-log_filename = ""
-log_data = pd.DataFrame(columns=['Date', 'pH', 'Alarm'])
+file_name = ""                  # Image name instead camera
+rotate = 0                      # Rotate input image
+mqtt_pub = 0                    # Publish to MQTT server if 1
+mqtt_username = "pi"            # MQTT user name
+mqtt_password = "password"      # MQTT password
+mqtt_addr = "127.0.0.1"         # MQTT address
+mqtt_port = 1883                # MQTT port
+mqtt_connected = 0              # Status connection to MQTT
+save_filename = ""              # File name to saving image on detect digits failure
+first_image = 1                 # Indicate first image capture from camera 
+use_gpio = 0                    # Use to GPIO if 1
+self_test = False               # Run self test if True
+log_filename = ""               # File name to log pH data
+log_data = pd.DataFrame(columns=['Date', 'pH', 'Alarm'])    # Data frame of pH data
+web_addr = ""                   # Web address to serving pH data (default all interfaces)
+web_port = 8025                 # Web port to serving pH data
 
 def app_parser_arguments():
     global file_name
@@ -167,19 +169,23 @@ def app_parser_arguments():
     global use_gpio
     global self_test
     global log_filename
+    global web_addr
+    global web_port
 
     parser = argparse.ArgumentParser(description='Chem Feeder MQTT')
-    parser.add_argument('-f','--file', help='Input image file', default = "")
-    parser.add_argument('-r','--rotate', type=int, help='Rotate image', default = 0)
+    parser.add_argument('-f','--file', help='Input image file', default=file_name)
+    parser.add_argument('-r','--rotate', type=int, help='Rotate image', default=rotate)
     parser.add_argument('--mqtt', help='Publish to MQTT', action="store_true")
-    parser.add_argument('--user', help='MQTT user', default = "pi")
-    parser.add_argument('--password', help='MQTT password', default = "password")
+    parser.add_argument('--user', help='MQTT user', default=mqtt_username)
+    parser.add_argument('--password', help='MQTT password', default=mqtt_password)
     parser.add_argument('--addr', help='MQTT address', default = "127.0.0.1")
     parser.add_argument('--port', type=int, help='MQTT port', default =1883)
     parser.add_argument('--save', type=str, help='If provided and detection failure, save capture image to file', default="")
     parser.add_argument('--gpio', action="store_true", help="Enable GPIO for power/alarm detection")
     parser.add_argument('--selftest', action="store_true", help="Run self-test and exit", default = False)
-    parser.add_argument('--datalog', type=str, help="File name for pH data logging/web site", default = "")
+    parser.add_argument('--datalog', type=str, help="File name for pH data logging/web site", default =log_filename)
+    parser.add_argument('--webaddr', type=str, help="Web server address", default=web_addr)
+    parser.add_argument('--webport', type=str, help="Web server port", default=web_port)
 
     args = parser.parse_args()
     file_name = args.file
@@ -192,7 +198,9 @@ def app_parser_arguments():
     save_filename = args.save
     use_gpio = args.gpio
     self_test = args.selftest
-    log_filename= args.datalog
+    log_filename = args.datalog
+    web_addr = args.webaddr
+    web_port = args.webport
 
 
 def sort_contours_top_to_bottom(contours):
@@ -200,6 +208,7 @@ def sort_contours_top_to_bottom(contours):
     bounding_boxes = [cv2.boundingRect(c) for c in contours]
     (contours, bounding_boxes) = zip(*sorted(zip(contours, bounding_boxes), key=lambda b: b[1][1])) # b[1][1] is the y-coordinate
     return contours, bounding_boxes
+
 
 def sort_contours_left_to_right_within_lines(contours, bounding_boxes, y_threshold=10):
     sorted_contours = []
@@ -472,7 +481,6 @@ def extract_digits(image_gray):
         alpha = 6.185
         beta = -0.5
         image_exposure = cv2.convertScaleAbs(image_gray, alpha=alpha, beta=beta)
-
         rc, ph = extract_digits_once(image_exposure)
 
     return rc, ph          
@@ -587,19 +595,16 @@ def gpio_init():
         GPIO.setup(GPIO_ALARM_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
 
 def gpio_pwr_configured():
-
     if GPIO_PWR_PIN == -1:
         return False
     return True
 
 def gpio_alarm_configured():
-
     if GPIO_ALARM_PIN == -1:
         return False
     return True
 
 def gpio_get_pwr():
-
     if GPIO_PWR_PIN == -1:
         return True
 
@@ -608,7 +613,6 @@ def gpio_get_pwr():
     return False
 
 def gpio_get_alarm():
-
     if GPIO_ALARM_PIN == -1:
         return 0
 
@@ -786,7 +790,6 @@ def are_almost_equal(a, b, tolerance=1e-9):
     return abs(a - b) < tolerance
 
 
-WEB_PORT = 8025
 httpd = None
 server_thread = None
 server_stop_event = None
@@ -858,7 +861,7 @@ def start_server_thread(event):
     global httpd
 
     socketserver.TCPServer.allow_reuse_address = True
-    httpd = socketserver.TCPServer(("", WEB_PORT), DataHandler)
+    httpd = socketserver.TCPServer((web_addr, web_port), DataHandler)
     httpd.timeout = 1
     while not event.is_set():
         httpd.handle_request()
@@ -873,7 +876,7 @@ def start_server_ph():
     server_thread = threading.Thread(target=start_server_thread, args=(server_stop_event,))
     server_thread.daemon = True
     server_thread.start()
-    print(f"pH Data Web port {WEB_PORT}")
+    print(f"pH Data Web {web_addr}:{web_port}")
 
 
 def create_html_ph_graph(title, v_min, v_max):
@@ -891,11 +894,11 @@ def create_html_ph_graph(title, v_min, v_max):
         height=500,
         xaxis=dict(
             title_text="Date"
-            ),
+        ),
         yaxis=dict(
             title_text="<b>pH</b>",
             range=[v_min,v_max]
-            ),
+        ),
         yaxis2=dict(
             title_text="<b>Alarm</b>",
             showgrid=False,
