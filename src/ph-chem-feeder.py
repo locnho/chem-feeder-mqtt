@@ -21,8 +21,8 @@ from plotly.subplots import make_subplots
 
 PICAM = 1           # Set to 1 to support RPI Camera, otherise, use the -f argument
 RPIGPIO = 1         # Set to 1 to support GPIO pin below. Must include the --gpio argument as well
-GPIO_PWR_PIN = 0    # physical GPIO board number for pH power detection (active low). Set to 0 to ignore
-GPIO_ALARM_PIN = 16 # physical GPIO board number for pH alarm detection (active low). Set to 0 to ignore
+GPIO_PWR_PIN = -1    # physical GPIO board number for pH power detection (active low). Set to -1 to ignore
+GPIO_ALARM_PIN = 16 # physical GPIO board number for pH alarm detection (active low). Set to -1 to ignore
 
 DBG_LEVEL = 0           # No debugging
 #DBG_LEVEL = 1          # Show image of detecting the LCD rectangle
@@ -581,24 +581,26 @@ def mqtt_publish(topic, message):
 
 def gpio_init():
     GPIO.setmode(GPIO.BCM)
-    GPIO.setup(GPIO_PWR_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-    GPIO.setup(GPIO_ALARM_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+    if GPIO_PWR_PIN != -1:
+        GPIO.setup(GPIO_PWR_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+    if GPIO_ALARM_PIN != -1:
+        GPIO.setup(GPIO_ALARM_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
 
 def gpio_pwr_configured():
 
-    if GPIO_PWR_PIN == 0:
+    if GPIO_PWR_PIN == -1:
         return False
     return True
 
 def gpio_alarm_configured():
 
-    if GPIO_ALARM_PIN == 0:
+    if GPIO_ALARM_PIN == -1:
         return False
     return True
 
 def gpio_get_pwr():
 
-    if GPIO_PWR_PIN == 0:
+    if GPIO_PWR_PIN == -1:
         return True
 
     if GPIO.input(GPIO_PWR_PIN) == GPIO.LOW:
@@ -607,7 +609,7 @@ def gpio_get_pwr():
 
 def gpio_get_alarm():
 
-    if GPIO_ALARM_PIN == 0:
+    if GPIO_ALARM_PIN == -1:
         return 0
 
     if GPIO.input(GPIO_ALARM_PIN) == GPIO.HIGH:
@@ -815,18 +817,13 @@ class DataHandler(SimpleHTTPRequestHandler):
             self.wfile.write(bytes(html_str, "utf-8"))
             if self.path == '/phall':
                 html_str = """
-                    <nav class="navbar navbar-expand-md navbar-light bg-primary">
-                        <div class="navbar-collapse collapse w-100 order-1 order-md-0 dual-collapse2">
-                            <ul class="navbar-nav mr-auto">
-                            </ul>
-                        </div>
-                        <div class="mx-auto order-0">
-                            <a class="navbar-brand" style="color: white">Chem Feeder pH Values</a>
-                        </div>
-                        <div class="navbar-collapse collapse w-100 order-3 daul-collapse2">
+                    <nav class="navbar navbar-light bg-primary">
+                        <a class="nav-link"></a>
+                        <h1 class="nav-brand" style="color:white">Chem Feeder pH Values</h1>
+                        <div>
                             <ul class="navbar-nav ml-auto">
-                                <li class="nav-item">
-                                    <a class="nav-link" href="/">pH Zoom Range</a>
+                                <li class="navbar-item">
+                                    <a class="nav-link"  href="/">pH Zoom Range</a>
                                 </li>
                             </ul>
                         </div>
@@ -836,17 +833,12 @@ class DataHandler(SimpleHTTPRequestHandler):
                 self.wfile.write(bytes(create_html_ph_graph("pH Values", 0, 8), "utf-8"))
             else:
                 html_str = """
-                    <nav class="navbar navbar-expand-md navbar-light bg-primary">
-                        <div class="navbar-collapse collapse w-100 order-1 order-md-0 dual-collapse2">
-                            <ul class="navbar-nav mr-auto">
-                            </ul>
-                        </div>
-                        <div class="mx-auto order-0">
-                            <a class="navbar-brand" style="color: white">Chem Feeder pH Values</a>
-                        </div>
-                        <div class="navbar-collapse collapse w-100 order-3 daul-collapse2">
+                    <nav class="navbar navbar-light bg-primary">
+                        <a class="nav-link"></a>
+                        <h1 class="nav-brand" style="color:white">Chem Feeder pH Values</h1>
+                        <div>
                             <ul class="navbar-nav ml-auto">
-                                <li class="nav-item">
+                                <li class="navbar-item">
                                     <a class="nav-link" href="/phall">pH Full Range</a>
                                 </li>
                             </ul>
@@ -1041,6 +1033,7 @@ if __name__ == "__main__":
         # Compute pH value
         if rc == ERR_LCDOFF:
             ph = 0.0
+            alarm = 0   # Force alarm to off when LCD is off
         else:
             if alarm and rc != ERR_SUCCESS:
                 ph = 1.0
