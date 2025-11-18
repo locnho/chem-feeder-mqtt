@@ -819,11 +819,11 @@ class DataHandler(SimpleHTTPRequestHandler):
                 html_str = """
                     <nav class="navbar navbar-light bg-primary">
                         <a class="nav-link"></a>
-                        <h1 class="nav-brand" style="color:white">Chem Feeder pH Values</h1>
+                        <h3 class="nav-brand" style="color:white">pH Chem Feeder</h3>
                         <div>
                             <ul class="navbar-nav ml-auto">
                                 <li class="navbar-item">
-                                    <a class="nav-link"  href="/">pH Zoom Range</a>
+                                    <a class="nav-link"  href="/">Zoom</a>
                                 </li>
                             </ul>
                         </div>
@@ -835,11 +835,11 @@ class DataHandler(SimpleHTTPRequestHandler):
                 html_str = """
                     <nav class="navbar navbar-light bg-primary">
                         <a class="nav-link"></a>
-                        <h1 class="nav-brand" style="color:white">Chem Feeder pH Values</h1>
+                        <h3 class="nav-brand" style="color:white">pH Chem Feeder</h3>
                         <div>
                             <ul class="navbar-nav ml-auto">
                                 <li class="navbar-item">
-                                    <a class="nav-link" href="/phall">pH Full Range</a>
+                                    <a class="nav-link" href="/phall">Full</a>
                                 </li>
                             </ul>
                         </div>
