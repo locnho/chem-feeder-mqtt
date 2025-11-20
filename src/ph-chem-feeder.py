@@ -924,7 +924,7 @@ class DataHandler(SimpleHTTPRequestHandler):
                     </nav>    
                  """
                 self.wfile.write(bytes(html_str, "utf-8"))
-                self.wfile.write(bytes(create_html_ph_graph("pH Values", 0, 8), "utf-8"))
+                self.wfile.write(bytes(create_html_ph_graph("pH Values", 0, 9, False), "utf-8"))
             else:
                 html_str = """
                     <nav class="navbar navbar-light bg-primary">
@@ -940,7 +940,7 @@ class DataHandler(SimpleHTTPRequestHandler):
                     </nav>    
                  """
                 self.wfile.write(bytes(html_str, "utf-8"))
-                self.wfile.write(bytes(create_html_ph_graph("pH Values", 7, 8), "utf-8"))
+                self.wfile.write(bytes(create_html_ph_graph("pH Values", 7, 8, True), "utf-8"))
             self.wfile.write(b"</body></html>")
 
           except Exception as e:
@@ -970,8 +970,10 @@ def start_server_ph():
     print(f"pH Data Web {web_addr}:{web_port}")
 
 
-def create_html_ph_graph(title, v_min, v_max):
+def create_html_ph_graph(title, v_min, v_max, ignore_zero):
     df = log_data.copy()
+    if ignore_zero:
+        df = df[df['pH'] > 0]
     df.rename(columns={'Date':'Date-Str'}, inplace=True)
     df['Date'] = pd.to_datetime(df['Date-Str'])
     # Create figure with secondary y-axis
