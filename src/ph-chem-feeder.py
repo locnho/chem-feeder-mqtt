@@ -19,10 +19,12 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 
-PICAM = 1               # Set to 1 to support RPI Camera, otherise, use the -f argument
-RPIGPIO = 1             # Set to 1 to support GPIO pin below. Must include the --gpio argument as well
-GPIO_PWR_PIN = -1       # physical GPIO board number for pH power detection (active low). Set to -1 to ignore
-GPIO_ALARM_PIN = 16     # physical GPIO board number for pH alarm detection (active low). Set to -1 to ignore
+PICAM = 1                 # Set to 1 to support RPI Camera, otherise, use the -f argument
+RPIGPIO = 1               # Set to 1 to support GPIO pin below. Must include the --gpio argument as well
+GPIO_PWR_PIN = -1         # physical GPIO board number for pH power detection (active low). Set to -1 to ignore
+GPIO_ALARM_PIN = 16       # physical GPIO board number for pH alarm detection (active low). Set to -1 to ignore
+GPIO_ACID_LEVEL_PIN1 = 27 # physical GPIO board number for acid tank level low. Set to -1 to ignore
+GPIO_ACID_LEVEL_PIN2 = 22 # physical GPIO board number for acid tank at 50%. Se to -1 to ignore
 
 DBG_LEVEL = 0           # No debugging
 #DBG_LEVEL = 1          # Show image of detecting the LCD rectangle
@@ -531,6 +533,9 @@ def get_file_image(file_name):
         print(f"Error: Could not load image from {file_name}")
     return image
 
+HOMEBRIDGE_DEVICE_TOPIC="homebridge"
+mqtt_client = None
+
 # Callback function for when the client connects to the broker
 def on_connect(client, userdata, flags, rc, properties):
     global mqtt_connected
@@ -538,6 +543,8 @@ def on_connect(client, userdata, flags, rc, properties):
     if rc == 0:
         print("Connected to MQTT Broker!")
         mqtt_connected = 1
+        #mqtt_client.subscribe(f"{HOMEBRIDGE_DEVICE_TOPIC}/#")
+        mqtt_create_devices()
     else:
         print(f"Failed to connect, return code {rc}\n")
         mqtt_connected = 0
@@ -546,7 +553,9 @@ def on_connect(client, userdata, flags, rc, properties):
 def on_publish(client, userdata, mid, reason_code, properties):
     print(f"MQTT: Message {mid} published", flush=True)
 
-mqtt_client = None
+def on_message(client, userdata, msg):
+    print(f"received message: {msg.payload.decode()} on topic {msg.topic}")
+
 
 def mqtt_init():
     global mqtt_client
@@ -560,6 +569,7 @@ def mqtt_init():
         # Assign callback functions
         mqtt_client.on_connect = on_connect
         mqtt_client.on_publish = on_publish
+        mqtt_client.on_message = on_message
         # Connect to the MQTT Broker
         mqtt_client.connect(mqtt_addr, mqtt_port, 60)
         # Start the network loop in a non-blocking way
@@ -578,6 +588,7 @@ def mqtt_close():
     print("Disconnected from MQTT Broker")
     mqtt_connected = 0
 
+
 def mqtt_publish(topic, message):
     # Publish a message
     global mqtt_connected
@@ -586,6 +597,45 @@ def mqtt_publish(topic, message):
         print(f"Publishing '{message}' topic '{topic}'")
         mqtt_client.publish(topic, message)
 
+def mqtt_create_devices():
+    if gpio_alarm_configured():
+        mqtt_publish(f"{HOMEBRIDGE_DEVICE_TOPIC}/to/add",
+                     "{\"name\": \"pH Alarm\", \"service_name\": \"pH Alarm\", \"service\": \"Switch\"}")
+    if gpio_acid_level1_configured() == True or gpio_acid_level2_configured() == True:
+        mqtt_publish(f"{HOMEBRIDGE_DEVICE_TOPIC}/to/add",
+                     "{\"name\": \"Acid Tank Level\", \"service_name\": \"Acid Tank Level\", \"service\": \"Lightbulb\"}")
+
+def mqtt_publish_ph_alarm(alarm):
+    if gpio_alarm_configured() == False:
+        return
+
+    if alarm:
+        mqtt_publish(f"{HOMEBRIDGE_DEVICE_TOPIC}/to/set",
+                     "{\"name\": \"pH Alarm\", \"service_name\": \"pH Alarm\", \"characteristic\": \"On\", \"value\": true}")
+    else:
+        mqtt_publish(f"{HOMEBRIDGE_DEVICE_TOPIC}/to/set",
+                     "{\"name\": \"pH Alarm\", \"service_name\": \"pH Alarm\", \"characteristic\": \"On\", \"value\": false}")
+
+def mqtt_publish_acid_level(level1, level2):
+    if gpio_acid_level1_configured() == False and gpio_acid_level2_configured() == False:
+        return
+
+    if level1:
+        val = 1
+        on = True
+    elif level2:
+        val = 50
+        on = True
+    else:
+        val = 100
+        on = True
+    msg = "{\"name\": \"Acid Tank Level\", \"service_name\": \"Acid Tank Level\", \"characteristic\": \"Brightness\", \"value\": "
+    msg += f"{val}"
+    if on:
+        msg += ", \"characteristic\": \"On\", \"value\": true}"
+    else:
+        msg += ", \"characteristic\": \"On\", \"value\": false}"
+    mqtt_publish(f"{HOMEBRIDGE_DEVICE_TOPIC}/to/set", msg)
 
 def gpio_init():
     GPIO.setmode(GPIO.BCM)
@@ -593,6 +643,10 @@ def gpio_init():
         GPIO.setup(GPIO_PWR_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
     if GPIO_ALARM_PIN != -1:
         GPIO.setup(GPIO_ALARM_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+    if GPIO_ACID_LEVEL_PIN1 != -1:
+        GPIO.setup(GPIO_ACID_LEVEL_PIN1, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+    if GPIO_ACID_LEVEL_PIN2 != -1:
+        GPIO.setup(GPIO_ACID_LEVEL_PIN2, GPIO.IN, pull_up_down=GPIO.PUD_UP)
 
 def gpio_pwr_configured():
     if GPIO_PWR_PIN == -1:
@@ -601,6 +655,16 @@ def gpio_pwr_configured():
 
 def gpio_alarm_configured():
     if GPIO_ALARM_PIN == -1:
+        return False
+    return True
+
+def gpio_acid_level1_configured():
+    if GPIO_ACID_LEVEL_PIN1 == -1:
+        return False
+    return True
+
+def gpio_acid_level2_configured():
+    if GPIO_ACID_LEVEL_PIN2 == -1:
         return False
     return True
 
@@ -619,6 +683,26 @@ def gpio_get_alarm():
     if GPIO.input(GPIO_ALARM_PIN) == GPIO.HIGH:
         return 1
     return 0
+
+def gpio_get_acid_level():
+    level1 = -1
+    level2 = -1
+
+    if gpio_acid_level1_configured():
+        if GPIO.input(GPIO_ACID_LEVEL_PIN1) == GPIO.HIGH:
+            level1 = 1
+        else:
+            level1 = 0
+    if gpio_acid_level2_configured():
+        if GPIO.input(GPIO_ACID_LEVEL_PIN2) == GPIO.HIGH:
+            level2 = 1
+        else:
+            level2 = 0
+    return level1, level2
+
+def is_lcd_off(images):
+    lcd_off = True
+    image_most = None
 
 
 def is_lcd_off(images):
@@ -916,6 +1000,7 @@ def create_html_ph_graph(title, v_min, v_max):
         rangeslider_visible=True,
         rangeselector=dict(
             buttons=list([
+                dict(count=1, label="1d", step="day", stepmode="backward"),
                 dict(count=7, label="1w", step="day", stepmode="backward"),
                 dict(count=14, label="2w", step="day", stepmode="backward"),
                 dict(count=1, label="1m", step="month", stepmode="backward"),
@@ -982,8 +1067,10 @@ if __name__ == "__main__":
             out_loop += 1
             rc = ERR_SUCCESS
             alarm = 0
+            acid_level1 = -1
+            acid_level2 = -1
             ph = 0.0
-            image = None
+            image = None            
             if len(file_name) > 0:
                 images = [get_file_image(file_name)]
             else:
@@ -995,8 +1082,9 @@ if __name__ == "__main__":
                             rc = ERR_LCDOFF
                         else:
                             print(f"Power: On")
-                    if gpio_alarm_configured():
-                        alarm = gpio_get_alarm()
+                    alarm = gpio_get_alarm()
+                    acid_level1, acid_level2 = gpio_get_acid_level()
+
                 if rc == ERR_SUCCESS:
                     image_list = get_camera_image()
                     ret, images = is_lcd_off(image_list)
@@ -1052,6 +1140,8 @@ if __name__ == "__main__":
 
         if mqtt_pub:
             mqtt_publish("aqualinkd/CHEM/pH/set", f"{ph:.2f}")
+            mqtt_publish_ph_alarm(alarm)
+            mqtt_publish_acid_level(acid_level1, acid_level2)
 
         if len(log_filename) > 0:
             #
