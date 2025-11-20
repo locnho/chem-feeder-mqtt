@@ -361,6 +361,10 @@ def extract_digits_once(image, threshold_val = 64, blurr_val = 5):
             cv2.waitKey(0)
             cv2.destroyAllWindows()
 
+        # Crop off the bottom row
+        img_height, img_width = image_erosion.shape
+        image_erosion = image_erosion[0:int(img_height*.75), 0:img_width]
+
         # find contours in the thresholded image, and put bounding box on the image
         cnts = cv2.findContours(image_erosion.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
         cnts = imutils.grab_contours(cnts)
@@ -381,13 +385,14 @@ def extract_digits_once(image, threshold_val = 64, blurr_val = 5):
                     print(f"Found: X {x} Y {y} W {w} H {h}")
                     image_w_bbox = cv2.rectangle(image_w_bbox,(x, y),(x+w, y+h),(128, 128, 128),2)
 
+        # print(len(digitCnts))
         if len(digitCnts) == 3:
             break
 
-    if DBG_LEVEL & 2:
-        cv2.imshow('Boxed', image_w_bbox) 
-        cv2.waitKey(0)
-        cv2.destroyAllWindows()
+        if DBG_LEVEL & 2:
+            cv2.imshow('Boxed', image_w_bbox) 
+            cv2.waitKey(0)
+            cv2.destroyAllWindows()
 
     # sort the contours from left-to-right
     if len(digitCnts) <= 0:
@@ -478,14 +483,20 @@ def extract_digits(image_gray):
     if rc != ERR_SUCCESS:
         rc, ph = extract_digits_once(image_gray, 127, 7)
     if rc != ERR_SUCCESS:
-        #
-        # Adjust exposure
-        alpha = 6.185
-        beta = -0.5
-        image_exposure = cv2.convertScaleAbs(image_gray, alpha=alpha, beta=beta)
-        rc, ph = extract_digits_once(image_exposure)
+        expos_list = [
+            (6.195, -0.5),
+            (2.5, 0),
+            (2.75, -0.36),
+            (3, -0.5),
+            (1.36, -0.5),
+        ]
+        for expos in expos_list:
+            image_exposure = cv2.convertScaleAbs(image_gray, alpha=expos[0], beta=expos[1])
+            rc, ph = extract_digits_once(image_exposure)
+            if rc == ERR_SUCCESS:
+                return rc, ph
 
-    return rc, ph          
+    return rc, ph
 
 
 if PICAM:
@@ -703,11 +714,6 @@ def gpio_get_acid_level():
 def is_lcd_off(images):
     lcd_off = True
     image_most = None
-
-
-def is_lcd_off(images):
-    lcd_off = True
-    image_most = None
     image_percent = 0
     image_list = []
 
@@ -718,7 +724,8 @@ def is_lcd_off(images):
         image_bw_total_one = cv2.countNonZero(image_bw)
         img_height, img_width = image_bw.shape
         image_bw_percentage = image_bw_total_one / (img_height * img_width)
-        if image_bw_percentage > 0.01:
+        # print(image_bw_percentage)
+        if image_bw_percentage > 0.10:
             lcd_off = False
             image_list.append(image)
         if image_bw_percentage > image_percent:
@@ -1072,7 +1079,11 @@ if __name__ == "__main__":
             ph = 0.0
             image = None            
             if len(file_name) > 0:
-                images = [get_file_image(file_name)]
+                image_list = [get_file_image(file_name)]
+                ret, images = is_lcd_off(image_list)
+                if ret == True:
+                    rc = ERR_LCDOFF
+                    ph = 0.0
             else:
                 if RPIGPIO and use_gpio:
                     if gpio_pwr_configured():
