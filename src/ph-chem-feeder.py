@@ -21,10 +21,9 @@ from plotly.subplots import make_subplots
 
 PICAM = 1                 # Set to 1 to support RPI Camera, otherise, use the -f argument
 RPIGPIO = 1               # Set to 1 to support GPIO pin below. Must include the --gpio argument as well
-GPIO_PWR_PIN = -1         # physical GPIO board number for pH power detection (active low). Set to -1 to ignore
-GPIO_ALARM_PIN = 16       # physical GPIO board number for pH alarm detection (active low). Set to -1 to ignore
-GPIO_ACID_LEVEL_PIN1 = 27 # physical GPIO board number for acid tank level low. Set to -1 to ignore
-GPIO_ACID_LEVEL_PIN2 = 22 # physical GPIO board number for acid tank at 50%. Se to -1 to ignore
+gpio_alarm_pin = 16       # physical GPIO board number for pH alarm detection (active low). Set to -1 to ignore
+gpio_acid_level_pin1 = 27 # physical GPIO board number for acid tank level low. Set to -1 to ignore
+gpio_acid_level_pin2 = 22 # physical GPIO board number for acid tank at 50%. Se to -1 to ignore
 
 DBG_LEVEL = 0           # No debugging
 #DBG_LEVEL = 1          # Show image of detecting the LCD rectangle
@@ -173,6 +172,9 @@ def app_parser_arguments():
     global log_filename
     global web_addr
     global web_port
+    global gpio_alarm_pin
+    global gpio_acid_level_pin1
+    global gpio_acid_level_pin2
 
     parser = argparse.ArgumentParser(description='Chem Feeder MQTT')
     parser.add_argument('-f','--file', help='Input image file', default=file_name)
@@ -183,7 +185,7 @@ def app_parser_arguments():
     parser.add_argument('--addr', help='MQTT address', default = "127.0.0.1")
     parser.add_argument('--port', type=int, help='MQTT port', default =1883)
     parser.add_argument('--save', type=str, help='If provided and detection failure, save capture image to file', default="")
-    parser.add_argument('--gpio', action="store_true", help="Enable GPIO for power/alarm detection")
+    parser.add_argument('--gpio', type=int, nargs="*", help=f"Enable GPIO for alarm,acid level1, and acid level2 detection\nDefault is {gpio_alarm_pin} {gpio_acid_level_pin1} {gpio_acid_level_pin2}")
     parser.add_argument('--selftest', action="store_true", help="Run self-test and exit", default = False)
     parser.add_argument('--datalog', type=str, help="File name for pH data logging/web site", default =log_filename)
     parser.add_argument('--webaddr', type=str, help="Web server address", default=web_addr)
@@ -203,7 +205,12 @@ def app_parser_arguments():
     log_filename = args.datalog
     web_addr = args.webaddr
     web_port = args.webport
-
+    if len(args.gpio) == 3:
+        gpio_alarm_pin = args.gpio[0]
+        gpio_acid_level_pin1 = args.gpio[1]
+        gpio_acid_level_pin2 = args.gpio[2]
+    else:
+        print("ignore GPIO setting and use default")
 
 def sort_contours_top_to_bottom(contours):
     # Create a list of (contour, bounding box) tuples
@@ -631,10 +638,10 @@ def mqtt_publish_acid_level(level1, level2):
     if gpio_acid_level1_configured() == False and gpio_acid_level2_configured() == False:
         return
 
-    if level1:
+    if level1 == 0:
         val = 1
         on = True
-    elif level2:
+    elif level2 == 0:
         val = 50
         on = True
     else:
@@ -642,56 +649,38 @@ def mqtt_publish_acid_level(level1, level2):
         on = True
     msg = "{\"name\": \"Acid Tank Level\", \"service_name\": \"Acid Tank Level\", \"characteristic\": \"Brightness\", \"value\": "
     msg += f"{val}"
-    if on:
-        msg += ", \"characteristic\": \"On\", \"value\": true}"
-    else:
-        msg += ", \"characteristic\": \"On\", \"value\": false}"
+    msg += "}"
     mqtt_publish(f"{HOMEBRIDGE_DEVICE_TOPIC}/to/set", msg)
 
 def gpio_init():
     GPIO.setmode(GPIO.BCM)
-    if GPIO_PWR_PIN != -1:
-        GPIO.setup(GPIO_PWR_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-    if GPIO_ALARM_PIN != -1:
-        GPIO.setup(GPIO_ALARM_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-    if GPIO_ACID_LEVEL_PIN1 != -1:
-        GPIO.setup(GPIO_ACID_LEVEL_PIN1, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-    if GPIO_ACID_LEVEL_PIN2 != -1:
-        GPIO.setup(GPIO_ACID_LEVEL_PIN2, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-
-def gpio_pwr_configured():
-    if GPIO_PWR_PIN == -1:
-        return False
-    return True
+    if gpio_alarm_pin != -1:
+        GPIO.setup(gpio_alarm_pin, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+    if gpio_acid_level_pin1 != -1:
+        GPIO.setup(gpio_acid_level_pin1, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+    if gpio_acid_level_pin2 != -1:
+        GPIO.setup(gpio_acid_level_pin2, GPIO.IN, pull_up_down=GPIO.PUD_UP)
 
 def gpio_alarm_configured():
-    if GPIO_ALARM_PIN == -1:
+    if gpio_alarm_pin == -1:
         return False
     return True
 
 def gpio_acid_level1_configured():
-    if GPIO_ACID_LEVEL_PIN1 == -1:
+    if gpio_acid_level_pin1 == -1:
         return False
     return True
 
 def gpio_acid_level2_configured():
-    if GPIO_ACID_LEVEL_PIN2 == -1:
+    if gpio_acid_level_pin2 == -1:
         return False
     return True
 
-def gpio_get_pwr():
-    if GPIO_PWR_PIN == -1:
-        return True
-
-    if GPIO.input(GPIO_PWR_PIN) == GPIO.LOW:
-        return True
-    return False
-
 def gpio_get_alarm():
-    if GPIO_ALARM_PIN == -1:
+    if gpio_alarm_pin == -1:
         return 0
 
-    if GPIO.input(GPIO_ALARM_PIN) == GPIO.HIGH:
+    if GPIO.input(gpio_alarm_pin) == GPIO.HIGH:
         return 1
     return 0
 
@@ -700,12 +689,12 @@ def gpio_get_acid_level():
     level2 = -1
 
     if gpio_acid_level1_configured():
-        if GPIO.input(GPIO_ACID_LEVEL_PIN1) == GPIO.HIGH:
+        if GPIO.input(gpio_acid_level_pin1) == GPIO.HIGH:
             level1 = 1
         else:
             level1 = 0
     if gpio_acid_level2_configured():
-        if GPIO.input(GPIO_ACID_LEVEL_PIN2) == GPIO.HIGH:
+        if GPIO.input(gpio_acid_level_pin2) == GPIO.HIGH:
             level2 = 1
         else:
             level2 = 0
@@ -773,7 +762,10 @@ def log_data_init():
     log_data_last_rotate = datetime.now()
 
     try:
-        log_data = pd.read_csv(log_filename)
+        if os.path.exists(log_filename + ".new"):
+            log_data = pd.read_csv(log_filename + ".new")
+        if len(log_data) <= 0:
+            log_data = pd.read_csv(log_filename)
         log_data['Date'] = pd.to_datetime(log_data['Date'], format=date_format_string)
 
     except FileNotFoundError:
@@ -810,44 +802,35 @@ def log_data_save():
     if os.path.exists(backup_filename):
         try:
             os.remove(backup_filename)
-        finally:
-            fail = 1
-    
+        except Exception as e:
+            print(f"Fail to remove bak file: {e}")
+            return
+
+    #
+    # Write to new file
+    new_filename = log_filename + ".new"
+    try:
+        if os.path.exists(new_filename):
+            os.remove(new_filename)
+        log_data.to_csv(new_filename, index=False)
+    except Exception as e:
+        print(f"Fail to save data new file {new_filename}: {e}")
+        return
+
     #
     # Rename to bak
     if os.path.exists(log_filename):
         try:
             os.rename(log_filename, backup_filename)
-        except IOError as e:
-            # Try again in future update
-            print(f"Fail to back up data file")
+        except Exception as e:
+            print(f"Unable to backup log file {log_filename}: {e}")
             return
-    
-    #
-    # Write data
+    # Rename to log file 
     try:
-        log_data.to_csv(log_filename, index=False)
-    except FileNotFoundError:
-        return
+        os.rename(new_filename, log_filename)
     except Exception as e:
-        print(f"Unable to save log file {log_filename} error: {e}")
-        #
-        # Fail to write data
-        # Remove it first before rename
-        try:
-            os.remove(log_filename)
-        finally:
-            fail = 1
-        os.rename(backup_file, log_filename)
+        print(f"Unable to save log file {log_filename}: {e}")
         return
-
-    #
-    # Remove back up as we successful wrote the data file
-    try:
-        if os.path.exists(backup_filename):
-            os.remove(backup_filename)
-    finally:
-        fail = 1
 
     log_data_last_saved = datetime.now()
     log_data_dirty = False
@@ -979,7 +962,7 @@ def create_html_ph_graph(title, v_min, v_max, ignore_zero):
     # Create figure with secondary y-axis
     fig = make_subplots(specs=[[{"secondary_y": True}]])
     # Add traces
-    fig.add_trace(go.Scatter(x=df['Date'], y=df['pH'], mode='lines', name="pH"),
+    fig.add_trace(go.Scatter(x=df['Date'], y=df['pH'], mode='lines+markers', name="pH"),
                   secondary_y=False)
     fig.add_trace(go.Scatter(x=df['Date'], y=df['Alarm'], mode='lines', name="Alarm"),
                   secondary_y=True)
@@ -1003,7 +986,8 @@ def create_html_ph_graph(title, v_min, v_max, ignore_zero):
             side="right",
             tickvals=[1],
             ticktext=['True']
-        )
+        ),
+        # modebar_remove=['zoom', 'pan', 'lasso', 'select', 'toimage']
     )
     fig.update_xaxes(
         rangeslider_visible=True,
@@ -1024,7 +1008,7 @@ def create_html_ph_graph(title, v_min, v_max, ignore_zero):
             dict(dtickrange=[3600000, None], value="%b %d %H:%M")
         ]
     )
-    return pio.to_html(fig, full_html=False, include_plotlyjs='cdn')
+    return pio.to_html(fig, full_html=False, include_plotlyjs='cdn', config={'displayModeBar': False})
 
 # Detect Alarm
 # try:
@@ -1045,6 +1029,11 @@ if __name__ == "__main__":
     if self_test:
         selftest()
         exit(0)
+
+    print(f"Alarm pin: {gpio_alarm_pin}")
+    print(f"Acid Level pin: {gpio_acid_level_pin1} {gpio_acid_level_pin2}")
+    print(f"Data Log file: {log_filename}")
+    print(f"Web Data: {web_addr}:{web_port}")
 
     if len(file_name) > 0:
         print(f"Using image from {file_name}", flush=True)
@@ -1069,6 +1058,7 @@ if __name__ == "__main__":
         start_server_ph()
 
     while True:
+        time_start = datetime.now()
         #
         # Try 3 time before report to MQTT
         out_loop = 0
@@ -1088,13 +1078,6 @@ if __name__ == "__main__":
                     ph = 0.0
             else:
                 if RPIGPIO and use_gpio:
-                    if gpio_pwr_configured():
-                        if gpio_get_pwr() == False:
-                            # No power to pH controller
-                            print("Power: Off")
-                            rc = ERR_LCDOFF
-                        else:
-                            print(f"Power: On")
                     alarm = gpio_get_alarm()
                     acid_level1, acid_level2 = gpio_get_acid_level()
 
@@ -1175,12 +1158,9 @@ if __name__ == "__main__":
             # Save data every hour or first one
             log_data_save()
 
-        if rc == ERR_LCDOFF:
-            # When there is no LCD, this implies that the unit is off.
-            # As such, sleep longer
-            time.sleep(15.0)
-        else:
-            time.sleep(10.0)
+        time_check = time_start + timedelta(seconds=30)
+        time_delay = time_check - datetime.now()
+        time.sleep(time_delay.total_seconds())
 
     if len(log_filename) > 0:
         httpd.shutdown()
