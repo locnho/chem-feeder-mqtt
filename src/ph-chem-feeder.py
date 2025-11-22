@@ -157,6 +157,7 @@ log_filename = ""               # File name to log pH data
 log_data = pd.DataFrame(columns=['Date', 'pH', 'Alarm'])    # Data frame of pH data
 web_addr = ""                   # Web address to serving pH data (default all interfaces)
 web_port = 8025                 # Web port to serving pH data
+sample_interval = 30            # Sample interval in second
 
 def app_parser_arguments():
     global file_name
@@ -175,6 +176,7 @@ def app_parser_arguments():
     global gpio_alarm_pin
     global gpio_acid_level_pin1
     global gpio_acid_level_pin2
+    global sample_interval
 
     parser = argparse.ArgumentParser(description='Chem Feeder MQTT')
     parser.add_argument('-f','--file', help='Input image file', default=file_name)
@@ -190,6 +192,7 @@ def app_parser_arguments():
     parser.add_argument('--datalog', type=str, help="File name for pH data logging/web site", default =log_filename)
     parser.add_argument('--webaddr', type=str, help="Web server address", default=web_addr)
     parser.add_argument('--webport', type=str, help="Web server port", default=web_port)
+    parser.add_argument('--sample', type=int, help="Sample interval in seconds", default=sample_interval)
 
     args = parser.parse_args()
     file_name = args.file
@@ -211,6 +214,8 @@ def app_parser_arguments():
         gpio_acid_level_pin2 = args.gpio[2]
     else:
         print("ignore GPIO setting and use default")
+    sample_interval = args.sample
+
 
 def sort_contours_top_to_bottom(contours):
     # Create a list of (contour, bounding box) tuples
@@ -785,7 +790,7 @@ def log_data_save():
         time_elapsed = datetime.now() - log_data_last_saved
         if time_elapsed < timedelta(hours=1):
             return 
-    
+   
     #
     # Only save if data added
     if log_data_dirty == False:
@@ -1158,9 +1163,10 @@ if __name__ == "__main__":
             # Save data every hour or first one
             log_data_save()
 
-        time_check = time_start + timedelta(seconds=30)
+        time_check = time_start + timedelta(seconds=sample_interval)
         time_delay = time_check - datetime.now()
-        time.sleep(time_delay.total_seconds())
+        if time_delay.total_seconds() > 0:
+            time.sleep(time_delay.total_seconds())
 
     if len(log_filename) > 0:
         httpd.shutdown()
