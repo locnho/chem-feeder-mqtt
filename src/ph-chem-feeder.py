@@ -10,6 +10,7 @@ import paho.mqtt.client as mqtt
 from datetime import datetime, timedelta
 from dateutil.relativedelta import relativedelta
 import pandas as pd
+import math
 
 import threading
 from http.server import SimpleHTTPRequestHandler
@@ -30,6 +31,11 @@ DBG_LEVEL = 0           # No debugging
 #DBG_LEVEL = 2          # Show image of detecting the digit rectangle
 #DBG_LEVEL = 4          # Show info and image of detection the individual digit
 #DBG_LEVEL = 1 + 2 + 4  # Show all
+
+verbose = 1             # 1 - mimimum
+verbose = 1 + 2         # plus MQTT publish
+#verbose = 1 + 2 + 4     # plus all MQTT message
+
 
 def sort_contours(cnts, method="left-to-right"):
 	# initialize the reverse flag and sort index
@@ -177,6 +183,7 @@ def app_parser_arguments():
     global gpio_acid_level_pin1
     global gpio_acid_level_pin2
     global sample_interval
+    global verbose
 
     parser = argparse.ArgumentParser(description='Chem Feeder MQTT')
     parser.add_argument('-f','--file', help='Input image file', default=file_name)
@@ -193,6 +200,8 @@ def app_parser_arguments():
     parser.add_argument('--webaddr', type=str, help="Web server address", default=web_addr)
     parser.add_argument('--webport', type=str, help="Web server port", default=web_port)
     parser.add_argument('--sample', type=int, help="Sample interval in seconds", default=sample_interval)
+    parser.add_argument('-v', action="store_true", help="Verbose level 1 and 2")
+    parser.add_argument('-vv', action="store_true", help="Verbose level 1, 2, and 4")
 
     args = parser.parse_args()
     file_name = args.file
@@ -212,9 +221,13 @@ def app_parser_arguments():
         gpio_alarm_pin = args.gpio[0]
         gpio_acid_level_pin1 = args.gpio[1]
         gpio_acid_level_pin2 = args.gpio[2]
-    else:
+    elif len(args.gpio) != 0:
         print("ignore GPIO setting and use default")
     sample_interval = args.sample
+    if args.vv:
+        verbose = 1 + 2 + 4
+    elif args.v:
+        verbose = 1 + 2
 
 
 def sort_contours_top_to_bottom(contours):
@@ -564,7 +577,8 @@ def on_connect(client, userdata, flags, rc, properties):
     global mqtt_connected
     
     if rc == 0:
-        print("Connected to MQTT Broker!")
+        if verbose & 0x04:
+            print("Connected to MQTT server")
         mqtt_connected = 1
         #mqtt_client.subscribe(f"{HOMEBRIDGE_DEVICE_TOPIC}/#")
         mqtt_create_devices()
@@ -574,10 +588,12 @@ def on_connect(client, userdata, flags, rc, properties):
 
 # Callback function for when a message is published
 def on_publish(client, userdata, mid, reason_code, properties):
-    print(f"MQTT: Message {mid} published", flush=True)
+    if verbose & 0x04:
+        print(f"MQTT: Message {mid} published", flush=True)
 
 def on_message(client, userdata, msg):
-    print(f"received message: {msg.payload.decode()} on topic {msg.topic}")
+    if verbose & 0x04:
+        print(f"received message: {msg.payload.decode()} on topic {msg.topic}")
 
 
 def mqtt_init():
@@ -585,7 +601,8 @@ def mqtt_init():
 
     # Create an MQTT client instance
     try:
-        print(f"Connecting to MQTT Broker {mqtt_addr}:{mqtt_port}")
+        if verbose & 0x04:
+            print(f"Connecting to MQTT Broker {mqtt_addr}:{mqtt_port}")
         mqtt_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id = "Chem Feeder")
         # Set user name/password
         mqtt_client.username_pw_set(mqtt_username, mqtt_password)
@@ -608,7 +625,8 @@ def mqtt_close():
     # Disconnect from the broker
     mqtt_client.loop_stop()
     mqtt_client.disconnect()
-    print("Disconnected from MQTT Broker")
+    if verbose & 0x04:
+        print("Disconnected from MQTT Broker")
     mqtt_connected = 0
 
 
@@ -617,7 +635,8 @@ def mqtt_publish(topic, message):
     global mqtt_connected
 
     if mqtt_connected:
-        print(f"Publishing '{message}' topic '{topic}'")
+        if verbose & 0x02:
+            print(f"Publishing '{message}' topic '{topic}'")
         mqtt_client.publish(topic, message)
 
 def mqtt_create_devices():
@@ -843,6 +862,7 @@ def log_data_save():
 
 def log_data_rotate():
     global log_data
+    global log_data_last_rotate
 
     time_elapsed = datetime.now() - log_data_last_rotate
     if time_elapsed < timedelta(hours=24):
@@ -864,9 +884,8 @@ def log_data_rotate():
     if to_delete > 0:
         log_data.drop(index=df.index[:to_delete], axis=0, inplace=True)
 
+    log_data_last_rotate = datetime.now()
 
-def are_almost_equal(a, b, tolerance=1e-9):
-    return abs(a - b) < tolerance
 
 
 httpd = None
@@ -955,8 +974,6 @@ def start_server_ph():
     server_thread = threading.Thread(target=start_server_thread, args=(server_stop_event,))
     server_thread.daemon = True
     server_thread.start()
-    print(f"pH Data Web {web_addr}:{web_port}")
-
 
 def create_html_ph_graph(title, v_min, v_max, ignore_zero):
     df = log_data.copy()
@@ -991,8 +1008,7 @@ def create_html_ph_graph(title, v_min, v_max, ignore_zero):
             side="right",
             tickvals=[1],
             ticktext=['True']
-        ),
-        # modebar_remove=['zoom', 'pan', 'lasso', 'select', 'toimage']
+        )
     )
     fig.update_xaxes(
         rangeslider_visible=True,
@@ -1035,15 +1051,15 @@ if __name__ == "__main__":
         selftest()
         exit(0)
 
-    print(f"Alarm pin: {gpio_alarm_pin}")
-    print(f"Acid Level pin: {gpio_acid_level_pin1} {gpio_acid_level_pin2}")
-    print(f"Data Log file: {log_filename}")
-    print(f"Web Data: {web_addr}:{web_port}")
+    print(f"      Alarm pin: {gpio_alarm_pin}")
+    print(f"Acid Level pins: {gpio_acid_level_pin1} {gpio_acid_level_pin2}")
+    print(f"  Data Log file: {log_filename}")
+    print(f"       Web Data: {web_addr}:{web_port}")
 
     if len(file_name) > 0:
-        print(f"Using image from {file_name}", flush=True)
+        print(f"          Input:  {file_name}", flush=True)
     else:
-        print(f"Using image from camera", flush=True)
+        print(f"          Input: camera", flush=True)
 
     if len(log_filename) > 0:
         log_data_init()
@@ -1132,6 +1148,7 @@ if __name__ == "__main__":
             elif rc != ERR_SUCCESS:
                 ph = 2.0
 
+
         if rc == ERR_LCDOFF:
             lcd_text = "OFF"
         else:
@@ -1151,11 +1168,21 @@ if __name__ == "__main__":
 
             #
             # Log data
-            row = { "Date" : datetime.now(), "pH" : ph, "Alarm" : alarm }
-            if log_data.shape[0] == 0 or ph != 0.0:
-                log_data.loc[len(log_data)] = row
-                log_data_dirty = True
-            elif not are_almost_equal(log_data.iloc[-1, 1], ph):
+            record_data = False
+            if log_data.shape[0] == 0:
+                # First one, always log
+                record_data = True
+            elif not math.isclose(log_data.iloc[-1, 1], ph):
+                # Value changed
+                record_data = True
+            elif ph != 0.0:
+                #
+                # Log every hour only for non-0
+                time_elpase = datetime.now() - log_data.iloc[-1, 0]
+                if time_elpase.total_seconds() >= 60*60:
+                    record_data = True
+            if record_data:
+                row = { "Date" : datetime.now(), "pH" : ph, "Alarm" : alarm }
                 log_data.loc[len(log_data)] = row
                 log_data_dirty = True
 
