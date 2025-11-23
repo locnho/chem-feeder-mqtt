@@ -29,9 +29,12 @@ For Acid Tank sensor, preferred non-contact sensor such:
 * IP68 Waterproof Junction Box Housing (https://www.amazon.com/dp/B0CP88ZFWL?ref=ppx_yo2ov_dt_b_fed_asin_title&th=1)
 * JST XH 2.54 MM Connector Kit (https://www.amazon.com/dp/B0F5QBR5F4?ref=ppx_yo2ov_dt_b_fed_asin_title&th=1)
 
-This requires a level shifter as the voltage is 5V and RPI 5 requires 3.3V. Then create the adapter board with JST connector. See image below:
+This requires a level shifter as the voltage is 5V and RPI 5 requires 3.3V. Then create the adapter board with JST connector. See images below:
 
-<img src="test-images/level-shifter-box.jpg" width="256"/>
+
+<img src="test-images/acid-tank-sensor.jpg" width="512"/> | <img src="test-images/level-shifter-box.jpg" width="256"/>
+
+To ensure that the junction box is sealed, apply some window sealant on the wire exit.
 
 
 # pH Report Values
