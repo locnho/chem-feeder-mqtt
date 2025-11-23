@@ -77,16 +77,22 @@ To mount the camera over the LCD display, use galvanized interlocking hanger str
 # Configuration with RPI GPIO
 
 GPIO Pin 16 - Alarm: This pin is used to detect pH controller alarm (active high). Connect to controller Normal Open (NO) side.
+
 GPIO Pin 27 - Acid Tank Level1: When this is asserted low, acid tank is below 1%.
+
 GPIO Pin 22 - Acid Tank Level2: When this is asserted low, acid tank is below 50%.
 
 Use this command to enable GPIO:
 
+```
 python ./ph-chem-feeder.py --mqtt --password "change to your password" --gpio
+```
 
 Use this command to enable and change GPIO pin:
 
+```
 python ./ph-chem-feeder.py --mqtt --password "change to your password" --gpio <alarm pin> <acid level1> <acid level2>
+```
 
 If you need more options, run with argument "--help".
 
