@@ -20,13 +20,28 @@ The hardware includes:
 
 The Raspbery PI 5 also runs AqualinkD.
 
+## Acid Tank Sensor
+
+For Acid Tank sensor, preferred non-contact sensor such:
+
+* XKC-Y25-V Non Contact Liquid Level Sensor (https://www.amazon.com/dp/B0C73F96MF?ref=ppx_yo2ov_dt_b_fed_asin_title) - 2 totals
+* KeeYees 10pcs 4 Channels IIC I2C Logic Level Converter Bi-Directional Module 3.3V to 5V Shifter (https://www.amazon.com/dp/B07LG646VS?ref=ppx_yo2ov_dt_b_fed_asin_title)
+* IP68 Waterproof Junction Box Housing (https://www.amazon.com/dp/B0CP88ZFWL?ref=ppx_yo2ov_dt_b_fed_asin_title&th=1)
+* JST XH 2.54 MM Connector Kit (https://www.amazon.com/dp/B0F5QBR5F4?ref=ppx_yo2ov_dt_b_fed_asin_title&th=1)
+
+This requires a level shifter as the voltage is 5V and RPI 5 requires 3.3V. Then create the adapter board with JST connector. See image below:
+
+<img src="test-images/level-shifter-box.jpg" width="256"/>
+
+
 # pH Report Values
 
 | pH            | Description                           |
 |---------------|---------------------------------------|
 |  0.0          | Unit is powered off or no LCD display |
+|  1.0          | Unable to detect LCD correctly        |
 |  2.0          | Unable to detect digits correctly     |
-|  other values | Values as reported by the unit         |
+|  other values | Values as reported by the unit        |
 
 Alarm is reported via the web site interface. Refer to section "Enable pH Data Logging and Web Page".
 
@@ -58,19 +73,17 @@ To mount the camera over the LCD display, use galvanized interlocking hanger str
 
 # Configuration with RPI GPIO
 
-GPIO Pin 0 - Power: This pin is used to detect power to the pH controller (active low).
-
 GPIO Pin 16 - Alarm: This pin is used to detect pH controller alarm (active high). Connect to controller Normal Open (NO) side.
+GPIO Pin 27 - Acid Tank Level1: When this is asserted low, acid tank is below 1%.
+GPIO Pin 22 - Acid Tank Level2: When this is asserted low, acid tank is below 50%.
 
-Use this command:
+Use this command to enable GPIO:
 
 python ./ph-chem-feeder.py --mqtt --password "change to your password" --gpio
 
-If you need more options, run with argument "--help".
+Use this command to enable and change GPIO pin:
 
-# Configuration without RPI GPIO
-
-python ./ph-chem-feeder.py --mqtt --password "change to your password"
+python ./ph-chem-feeder.py --mqtt --password "change to your password" --gpio <alarm pin> <acid level1> <acid level2>
 
 If you need more options, run with argument "--help".
 
@@ -86,7 +99,10 @@ To record pH reading for view on a web page, you must enable data logging as fol
 python3 ph-chem-feeder.py --gpio --mqtt --password <your password> --gpio --datalog /home/pi/chem-data.bin
 
 ```
-When a pH value is changed from previous value, it saved to the datalog file. The data can be view from a web page as follow:
+
+When pH value is changed from previous value, it saved to the datalog file. All non-zero pH value is only saved once a hour.
+
+The data can be view from a web page as follow:
 
 ```
 http://<ip address>:8025
