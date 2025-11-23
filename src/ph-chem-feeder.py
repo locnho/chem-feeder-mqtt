@@ -1177,9 +1177,9 @@ if __name__ == "__main__":
                 record_data = True
             elif ph != 0.0:
                 #
-                # Log every hour only for non-0
+                # Log every 15 minutes for non-0
                 time_elpase = datetime.now() - log_data.iloc[-1, 0]
-                if time_elpase.total_seconds() >= 60*60:
+                if time_elpase.total_seconds() >= 15*60:
                     record_data = True
             if record_data:
                 row = { "Date" : datetime.now(), "pH" : ph, "Alarm" : alarm }
