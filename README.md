@@ -4,7 +4,9 @@ This project provides detection of Pool pH value and report to AquaLinkD via MQT
 
  * Using a camera to capture the pH controller screen
  * Extract the pH value from the LCD 7 segment display
- * Make a connection to the MQTT service to publish the pH value 
+ * Make a connection to the MQTT service to publish the pH value
+ * Report pH controller alarm to MQTT service
+ * Report Acid tank level to MQTT service
 
 This work makes use of https://github.com/ved-sharma/Digits_recognition_OpenCV_Python and https://pyimagesearch.com/2018/09/17/opencv-ocr-and-text-recognition-with-tesseract.
 
@@ -109,7 +111,7 @@ python3 ph-chem-feeder.py --gpio --mqtt --password <your password> --gpio --data
 
 ```
 
-When pH value is changed from previous value, it saved to the datalog file. All non-zero pH value is only saved once a hour.
+When pH value is changed from previous value, it saved to the datalog file. All non-zero pH value is only saved every 15 minutes. 
 
 The data can be view from a web page as follow:
 
