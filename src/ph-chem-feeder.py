@@ -217,11 +217,11 @@ def app_parser_arguments():
     log_filename = args.datalog
     web_addr = args.webaddr
     web_port = args.webport
-    if len(args.gpio) == 3:
+    if args.gpio is not None and len(args.gpio) == 3:
         gpio_alarm_pin = args.gpio[0]
         gpio_acid_level_pin1 = args.gpio[1]
         gpio_acid_level_pin2 = args.gpio[2]
-    elif len(args.gpio) != 0:
+    elif args.gpio is not None and len(args.gpio) != 0:
         print("ignore GPIO setting and use default")
     sample_interval = args.sample
     if args.vv:
@@ -728,8 +728,7 @@ def is_lcd_off(images):
     lcd_off = True
     image_most = None
     image_percent = 0
-    image_list = []
-
+    image_pair = []
     for image in images:
         if image is None:
             continue
@@ -740,12 +739,13 @@ def is_lcd_off(images):
         # print(image_bw_percentage)
         if image_bw_percentage > 0.10:
             lcd_off = False
-            image_list.append(image)
+            image_pair.append((image_bw_percentage, image))
         if image_bw_percentage > image_percent:
             image_most = image
             image_percent = image_bw_percentage
 
-    return lcd_off, image_list
+    image_list = sorted(image_pair, key=lambda item: item[0], reverse=True)
+    return lcd_off, [item[1] for item in image_list]
 
 
 def selftest():
