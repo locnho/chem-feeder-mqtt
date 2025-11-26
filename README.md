@@ -189,6 +189,26 @@ The general idea is:
 11. Final, try three times.
 12. If all failed, report 2.0 for error decoding digits.
 
+# Homebridge MQTT Integration for Acid Tank Level & Alarm
+
+To report Acid Tank Level and Alarm in HomeKit, install the homebridge-mqtt plugin (https://github.com/cflurin/homebridge-mqtt).
+
+The configuration setting:
+
+```
+        {
+            "name": "mqtt",
+            "url": "mqtt://127.0.0.1",
+            "port": "1883",
+            "username": "pi",
+            "password": "password",
+            "qos": 0,
+            "topic_type": "multiple",
+            "topic_prefix": "homebridge",
+            "platform": "mqtt"
+        }
+```
+
 # Misc Note
 
 If your camera is mounted at a different direction, use the "-r" parameter to rotate.
