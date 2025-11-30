@@ -673,10 +673,16 @@ def mqtt_publish_acid_level(level1, level2):
     else:
         val = 100
         on = True
-    msg = "{\"name\": \"Acid Tank Level\", \"service_name\": \"Acid Tank Level\", \"characteristic\": \"Brightness\", \"value\": "
-    msg += f"{val}"
-    msg += "}"
-    mqtt_publish(f"{HOMEBRIDGE_DEVICE_TOPIC}/to/set", msg)
+    if on:
+        mqtt_publish(f"{HOMEBRIDGE_DEVICE_TOPIC}/to/set",
+                      "{\"name\": \"Acid Tank Level\", \"service_name\": \"Acid Tank Level\", \"characteristic\": \"On\", \"value\": true}")
+        msg = "{\"name\": \"Acid Tank Level\", \"service_name\": \"Acid Tank Level\", \"characteristic\": \"Brightness\", \"value\": "
+        msg += f"{val}"
+        msg += "}"
+        mqtt_publish(f"{HOMEBRIDGE_DEVICE_TOPIC}/to/set", msg)
+    else:
+        mqtt_publish(f"{HOMEBRIDGE_DEVICE_TOPIC}/to/set",
+                      "{\"name\": \"Acid Tank Level\", \"service_name\": \"Acid Tank Level\", \"characteristic\": \"On\", \"value\": false}")
 
 def gpio_init():
     GPIO.setmode(GPIO.BCM)
