@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 from dateutil.relativedelta import relativedelta
 import pandas as pd
 import math
+import glob
 
 import threading
 from http.server import SimpleHTTPRequestHandler
@@ -26,11 +27,12 @@ gpio_alarm_pin = 16       # physical GPIO board number for pH alarm detection (a
 gpio_acid_level_pin1 = 27 # physical GPIO board number for acid tank level low. Set to -1 to ignore
 gpio_acid_level_pin2 = 22 # physical GPIO board number for acid tank at 50%. Se to -1 to ignore
 
-DBG_LEVEL = 0           # No debugging
-#DBG_LEVEL = 1          # Show image of detecting the LCD rectangle
-#DBG_LEVEL = 2          # Show image of detecting the digit rectangle
-#DBG_LEVEL = 4          # Show info and image of detection the individual digit
-#DBG_LEVEL = 1 + 2 + 4  # Show all
+DBG_LEVEL = 0               # No debugging
+#DBG_LEVEL = 1              # Show image of detecting the LCD rectangle
+#DBG_LEVEL = 2              # Show image of detecting the digit rectangle
+#DBG_LEVEL = 4              # Show info and image of detection the individual digit
+#DBG_LEVEL = 8              # Show data saving
+#DBG_LEVEL = 1 + 2 + 4 + 8  # Show all
 
 verbose = 1             # 1 - mimimum
 verbose = 1 + 2         # plus MQTT publish
@@ -779,6 +781,15 @@ log_data_last_rotate = None
 log_data_last_saved = None
 log_data_dirty = True
 
+
+def find_newest_file(path, file_pattern="*"):
+    list_of_files = glob.glob(os.path.join(path, file_pattern))
+    if not list_of_files:
+        return None
+
+    newest_file = max(list_of_files, key=os.path.getmtime)
+    return newest_file
+
 def log_data_init():
     global log_data_last_rotate
     global log_data
@@ -786,11 +797,12 @@ def log_data_init():
     log_data_last_rotate = datetime.now()
 
     try:
-        if os.path.exists(log_filename + ".new"):
-            log_data = pd.read_csv(log_filename + ".new")
-        if len(log_data) <= 0:
-            log_data = pd.read_csv(log_filename)
-        log_data['Date'] = pd.to_datetime(log_data['Date'], format=date_format_string)
+        path, filename = os.path.split(log_filename)
+        data_file = find_newest_file(path, filename + "*")
+        if data_file is not None:
+            print(f"Loading data from {data_file}")                
+            log_data = pd.read_csv(data_file)
+            log_data['Date'] = pd.to_datetime(log_data['Date'], format=date_format_string)
 
     except FileNotFoundError:
         return
@@ -821,40 +833,28 @@ def log_data_save():
     os.makedirs(directory, exist_ok=True)
 
     #
-    # Remove old back up if existed
-    backup_filename = log_filename + ".bak"
-    if os.path.exists(backup_filename):
-        try:
-            os.remove(backup_filename)
-        except Exception as e:
-            print(f"Fail to remove bak file: {e}")
-            return
-
-    #
     # Write to new file
-    new_filename = log_filename + ".new"
+    new_filename = log_filename + datetime.now().strftime(".%Y%M%d-%H%M%S.%f")
     try:
         if os.path.exists(new_filename):
             os.remove(new_filename)
+        if DBG_LEVEL & 0x8:
+            print(f"Saving {len(log_data)} data to file {new_filename}")
         log_data.to_csv(new_filename, index=False)
     except Exception as e:
         print(f"Fail to save data new file {new_filename}: {e}")
         return
 
     #
-    # Rename to bak
-    if os.path.exists(log_filename):
-        try:
-            os.rename(log_filename, backup_filename)
-        except Exception as e:
-            print(f"Unable to backup log file {log_filename}: {e}")
-            return
-    # Rename to log file 
-    try:
-        os.rename(new_filename, log_filename)
-    except Exception as e:
-        print(f"Unable to save log file {log_filename}: {e}")
-        return
+    # Remove file if more than 10
+    files = [os.path.join(directory, f) for f in glob.glob(log_filename + "*") if os.path.isfile(os.path.join(directory, f))]
+    sorted_files = sorted(files, key=os.path.getmtime)
+    if len(sorted_files) > 10:
+        total = len(sorted_files)
+        for f in sorted_files[:total-10]:
+            if DBG_LEVEL & 0x8:
+                print(f"Removing file {f}")
+            os.remove(f)
 
     log_data_last_saved = datetime.now()
     log_data_dirty = False
@@ -885,7 +885,6 @@ def log_data_rotate():
         log_data.drop(index=df.index[:to_delete], axis=0, inplace=True)
 
     log_data_last_rotate = datetime.now()
-
 
 
 httpd = None
@@ -951,6 +950,7 @@ class DataHandler(SimpleHTTPRequestHandler):
             self.wfile.write(b"</body></html>")
 
           except Exception as e:
+            print(f"Failed to process HTT response {e}")
             return
         else:
             super().do_GET()
@@ -1148,7 +1148,6 @@ if __name__ == "__main__":
             elif rc != ERR_SUCCESS:
                 ph = 2.0
 
-
         if rc == ERR_LCDOFF:
             lcd_text = "OFF"
         else:
@@ -1181,6 +1180,7 @@ if __name__ == "__main__":
                 time_elpase = datetime.now() - log_data.iloc[-1, 0]
                 if time_elpase.total_seconds() >= 15*60:
                     record_data = True
+
             if record_data:
                 row = { "Date" : datetime.now(), "pH" : ph, "Alarm" : alarm }
                 log_data.loc[len(log_data)] = row
@@ -1189,7 +1189,7 @@ if __name__ == "__main__":
             #
             # Save data every hour or first one
             log_data_save()
-
+        
         time_check = time_start + timedelta(seconds=sample_interval)
         time_delay = time_check - datetime.now()
         if time_delay.total_seconds() > 0:
