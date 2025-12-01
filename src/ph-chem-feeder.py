@@ -166,6 +166,7 @@ log_data = pd.DataFrame(columns=['Date', 'pH', 'Alarm'])    # Data frame of pH d
 web_addr = ""                   # Web address to serving pH data (default all interfaces)
 web_port = 8025                 # Web port to serving pH data
 sample_interval = 30            # Sample interval in second
+crop_rect = [0, 0, 0, 0]        # Crop value of all sides
 
 def app_parser_arguments():
     global file_name
@@ -186,6 +187,7 @@ def app_parser_arguments():
     global gpio_acid_level_pin2
     global sample_interval
     global verbose
+    global crop_rect
 
     parser = argparse.ArgumentParser(description='Chem Feeder MQTT')
     parser.add_argument('-f','--file', help='Input image file', default=file_name)
@@ -204,6 +206,7 @@ def app_parser_arguments():
     parser.add_argument('--sample', type=int, help="Sample interval in seconds", default=sample_interval)
     parser.add_argument('-v', action="store_true", help="Verbose level 1 and 2")
     parser.add_argument('-vv', action="store_true", help="Verbose level 1, 2, and 4")
+    parser.add_argument('--crop', type=int, nargs=4, help=F"Amount of pixel to crop on left, top, right, bottom\nDefault is 0, 0, 0, 0.\nCrop is before rotate.")
 
     args = parser.parse_args()
     file_name = args.file
@@ -230,6 +233,8 @@ def app_parser_arguments():
         verbose = 1 + 2 + 4
     elif args.v:
         verbose = 1 + 2
+    if args.crop is not None:
+        crop_rect = [args.crop[0], args.crop[1], args.crop[2], args.crop[3]]
 
 
 def sort_contours_top_to_bottom(contours):
@@ -273,6 +278,14 @@ def sort_contours_left_to_right_within_lines(contours, bounding_boxes, y_thresho
 
 
 def extract_digits_once(image, threshold_val = 64, blurr_val = 5):
+    if crop_rect[0] > 0 or crop_rect[1] > 0 or crop_rect[2] > 0 or crop_rect[3] > 0:
+        img_height, img_width = image.shape
+        image = image[crop_rect[1]:img_height - crop_rect[3], crop_rect[0]:img_width - crop_rect[2]]
+        if DBG_LEVEL & 1:
+            cv2.imshow('Crop', image_resize) 
+            cv2.waitKey(0)
+            cv2.destroyAllWindows()
+
     if rotate != 0:
 	    image = imutils.rotate_bound(image, rotate)
 
@@ -734,13 +747,18 @@ def gpio_get_acid_level():
 
 def is_lcd_off(images):
     lcd_off = True
-    image_most = None
-    image_percent = 0
     image_pair = []
     for image in images:
         if image is None:
             continue
-        image_bw = cv2.threshold(image, 32, 255, cv2.THRESH_BINARY)[1]
+        img_height, img_width = image.shape
+        image_crop = image[crop_rect[1]:img_height - crop_rect[3], crop_rect[0]:img_width - crop_rect[2]]
+        if DBG_LEVEL & 1:
+            cv2.imshow('Crop', image_resize) 
+            cv2.waitKey(0)
+            cv2.destroyAllWindows()
+
+        image_bw = cv2.threshold(image_crop, 32, 255, cv2.THRESH_BINARY)[1]
         image_bw_total_one = cv2.countNonZero(image_bw)
         img_height, img_width = image_bw.shape
         image_bw_percentage = image_bw_total_one / (img_height * img_width)
@@ -748,9 +766,6 @@ def is_lcd_off(images):
         if image_bw_percentage > 0.10:
             lcd_off = False
             image_pair.append((image_bw_percentage, image))
-        if image_bw_percentage > image_percent:
-            image_most = image
-            image_percent = image_bw_percentage
 
     image_list = sorted(image_pair, key=lambda item: item[0], reverse=True)
     return lcd_off, [item[1] for item in image_list]
@@ -766,11 +781,18 @@ def selftest():
             total += 1
             try:
                 image = get_file_image(filepath)
-                rc, ph = extract_digits(image)
-                expect_value = int(filename[:3]) / 100.0
-                if ph != expect_value:
-                    print(f"Fail to decode {filepath}")
-                    failed += 1
+                is_off, image_list = is_lcd_off([image])
+                if is_off:
+                    expect_value = int(filename[:3]) / 100.0
+                    if expect_value != 0:
+                        print(f"Fail to decode {filepath} as it is detected off")
+                        failed += 1
+                else:
+                    rc, ph = extract_digits(image)
+                    expect_value = int(filename[:3]) / 100.0
+                    if ph != expect_value:
+                        print(f"Fail to decode {filepath}")
+                        failed += 1
 
             except Exception as e:
                 failed += 1
