@@ -862,7 +862,7 @@ def log_data_save():
 
     #
     # Write to new file
-    new_filename = log_filename + datetime.now().strftime(".%Y%M%d-%H%M%S.%f")
+    new_filename = log_filename + datetime.now().strftime(".%Y%m%d-%H%M%S.%f")
     try:
         if os.path.exists(new_filename):
             os.remove(new_filename)
