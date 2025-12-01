@@ -882,10 +882,9 @@ def log_data_rotate():
     to_delete = 0
     for i in range(len(log_data)):
         date_row = log_data.iloc[i, 0]
-        if date_row <= date_object:
-            to_delete += 1
-        else:
+        if data_row <= date_object:
             break
+        to_delete += 1
     
     if to_delete > 0:
         log_data.drop(index=df.index[:to_delete], axis=0, inplace=True)
