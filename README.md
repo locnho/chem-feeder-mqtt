@@ -34,9 +34,15 @@ For Acid Tank sensor, preferred non-contact sensor such:
 This requires a level shifter as the voltage is 5V and RPI 5 requires 3.3V. Then create the adapter board with JST connector. See images below:
 
 
-<img src="test-images/acid-tank-sensor.jpg" width="512"/> | <img src="test-images/level-shifter-box.jpg" width="256"/>
+<img src="misc/acid-tank-sensor.jpg" width="512"/> | <img src="misc/level-shifter-box.jpg" width="256"/>
 
 To ensure that the junction box is sealed, apply some window sealant on the wire exit.
+
+## Mounting
+
+To mount various hardware, use Aluminum DIN Rails (https://en.wikipedia.org/wiki/DIN_rail).
+
+The folder "models" includes various 3D print models for DIN rail mounting.
 
 
 # pH Report Values
@@ -73,7 +79,7 @@ Below is an image of the pH Controller and RPI camera mount:
 
 To mount the camera over the LCD display, use galvanized interlocking hanger strap. I strapped my pH tank with this. Wrap the hanger strap with some transparent tape. Then bend and squeeze in between the RPI heat sink. There is also mounting 3D models located at folder models. This will make adjust much simple.
 
-<img src="test-images/ph-controller.jpg" width="256"/> | <img src="test-images/ph-controller-v2.jpg" width="256"/>
+<img src="misc/ph-controller.jpg" width="256"/> | <img src="misc/ph-controller-v2.jpg" width="256"/>
 
 
 # Configuration with RPI GPIO
@@ -97,6 +103,18 @@ python ./ph-chem-feeder.py --mqtt --password "change to your password" --gpio <a
 ```
 
 If you need more options, run with argument "--help".
+
+# Cropping Image
+
+Due to LED of various electronic, you may need to crop the image using the argument "--crop" or cover these LEDs. This argument will crop from four sides.
+
+This command will crop the left side by 400 pixels.
+
+```
+python ./ph-chem-feeder.py --crop 400 0 0 0 --mqtt --password "change to your password" 
+
+```
+
 
 # Configure to start at system boot
 
@@ -122,7 +140,7 @@ http://<ip address>:8025
 
 Below is an screen shoot of the web page.
 
-![screenshot](test-images/data-log-page.png)
+![screenshot](misc/data-log-page.png)
 
 
 # What to do if it is not detecting digits correctly?
@@ -140,11 +158,11 @@ This will show you what the image looks like.
 
 First, make sure that the detection of the screen is correct. It should crop to just the LCD screen. Refer to image below:
 
-<img src="test-images/cropped.png" width="256"/>
+<img src="misc/cropped.png" width="256"/>
 
 Second, make sure that each digit has a rectangle draw on it. This indicates that it detected the location of the 3 digits.
 
-![screenshot](test-images/digit-rect.png)
+![screenshot](misc/digit-rect.png)
 
 
 Finally, the decode of each digits. This last part should just work. Otherwise you will need to adjust the detection of the individual segment by changing this code fragment:
