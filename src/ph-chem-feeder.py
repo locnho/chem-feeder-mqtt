@@ -282,7 +282,7 @@ def extract_digits_once(image, threshold_val = 64, blurr_val = 5):
         img_height, img_width = image.shape
         image = image[crop_rect[1]:img_height - crop_rect[3], crop_rect[0]:img_width - crop_rect[2]]
         if DBG_LEVEL & 1:
-            cv2.imshow('Crop', image_resize) 
+            cv2.imshow('Crop', image) 
             cv2.waitKey(0)
             cv2.destroyAllWindows()
 
@@ -754,7 +754,7 @@ def is_lcd_off(images):
         img_height, img_width = image.shape
         image_crop = image[crop_rect[1]:img_height - crop_rect[3], crop_rect[0]:img_width - crop_rect[2]]
         if DBG_LEVEL & 1:
-            cv2.imshow('Crop', image_resize) 
+            cv2.imshow('Crop', image_crop) 
             cv2.waitKey(0)
             cv2.destroyAllWindows()
 
@@ -762,7 +762,8 @@ def is_lcd_off(images):
         image_bw_total_one = cv2.countNonZero(image_bw)
         img_height, img_width = image_bw.shape
         image_bw_percentage = image_bw_total_one / (img_height * img_width)
-        # print(image_bw_percentage)
+        if DBG_LEVEL & 1:
+            print(image_bw_percentage)
         if image_bw_percentage > 0.10:
             lcd_off = False
             image_pair.append((image_bw_percentage, image))
