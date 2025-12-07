@@ -14,11 +14,12 @@ import math
 import glob
 
 import threading
-from http.server import SimpleHTTPRequestHandler
-import socketserver
-import plotly.io as pio
+import plotly.io as pio                     # For convert plotly to HTML
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+from fastapi import FastAPI
+from fastapi.responses import HTMLResponse
+import uvicorn
 
 
 PICAM = 1                 # Set to 1 to support RPI Camera, otherise, use the -f argument
@@ -163,7 +164,7 @@ use_gpio = 0                    # Use to GPIO if 1
 self_test = False               # Run self test if True
 log_filename = ""               # File name to log pH data
 log_data = pd.DataFrame(columns=['Date', 'pH', 'Alarm'])    # Data frame of pH data
-web_addr = ""                   # Web address to serving pH data (default all interfaces)
+web_addr = "0.0.0.0"            # Web address to serving pH data (default all interfaces)
 web_port = 8025                 # Web port to serving pH data
 sample_interval = 30            # Sample interval in second
 crop_rect = [0, 0, 0, 0]        # Crop value of all sides
@@ -542,6 +543,7 @@ def extract_digits(image_gray):
 if PICAM:
     picam2 = None
 
+
 def camera_init():
     global picam2
 
@@ -552,6 +554,7 @@ def camera_init():
             buffer_count=2
         )
     picam2.configure(config)
+
 
 def get_camera_image():
     global picam2
@@ -574,6 +577,7 @@ def get_camera_image():
 
     return images
 
+
 def get_file_image(file_name):
     if not os.path.exists(file_name):
         print(f"File does not exist {file_name}")
@@ -584,8 +588,10 @@ def get_file_image(file_name):
         print(f"Error: Could not load image from {file_name}")
     return image
 
+
 HOMEBRIDGE_DEVICE_TOPIC="homebridge"
 mqtt_client = None
+
 
 # Callback function for when the client connects to the broker
 def on_connect(client, userdata, flags, rc, properties):
@@ -601,10 +607,12 @@ def on_connect(client, userdata, flags, rc, properties):
         print(f"Failed to connect, return code {rc}\n")
         mqtt_connected = 0
 
+
 # Callback function for when a message is published
 def on_publish(client, userdata, mid, reason_code, properties):
     if verbose & 0x04:
         print(f"MQTT: Message {mid} published", flush=True)
+
 
 def on_message(client, userdata, msg):
     if verbose & 0x04:
@@ -634,6 +642,7 @@ def mqtt_init():
         print("Can not connect to MQTT Broker")
         return ERR_NOMQTT
 
+
 def mqtt_close():
     global mqtt_connected
 
@@ -662,6 +671,7 @@ def mqtt_create_devices():
         mqtt_publish(f"{HOMEBRIDGE_DEVICE_TOPIC}/to/add",
                      "{\"name\": \"Acid Tank Level\", \"service_name\": \"Acid Tank Level\", \"service\": \"Lightbulb\"}")
 
+
 def mqtt_publish_ph_alarm(alarm):
     if gpio_alarm_configured() == False:
         return
@@ -672,6 +682,7 @@ def mqtt_publish_ph_alarm(alarm):
     else:
         mqtt_publish(f"{HOMEBRIDGE_DEVICE_TOPIC}/to/set",
                      "{\"name\": \"pH Alarm\", \"service_name\": \"pH Alarm\", \"characteristic\": \"On\", \"value\": false}")
+
 
 def mqtt_publish_acid_level(level1, level2):
     if gpio_acid_level1_configured() == False and gpio_acid_level2_configured() == False:
@@ -697,6 +708,7 @@ def mqtt_publish_acid_level(level1, level2):
         mqtt_publish(f"{HOMEBRIDGE_DEVICE_TOPIC}/to/set",
                       "{\"name\": \"Acid Tank Level\", \"service_name\": \"Acid Tank Level\", \"characteristic\": \"On\", \"value\": false}")
 
+
 def gpio_init():
     GPIO.setmode(GPIO.BCM)
     if gpio_alarm_pin != -1:
@@ -706,20 +718,24 @@ def gpio_init():
     if gpio_acid_level_pin2 != -1:
         GPIO.setup(gpio_acid_level_pin2, GPIO.IN, pull_up_down=GPIO.PUD_UP)
 
+
 def gpio_alarm_configured():
     if gpio_alarm_pin == -1:
         return False
     return True
+
 
 def gpio_acid_level1_configured():
     if gpio_acid_level_pin1 == -1:
         return False
     return True
 
+
 def gpio_acid_level2_configured():
     if gpio_acid_level_pin2 == -1:
         return False
     return True
+
 
 def gpio_get_alarm():
     if gpio_alarm_pin == -1:
@@ -728,6 +744,7 @@ def gpio_get_alarm():
     if GPIO.input(gpio_alarm_pin) == GPIO.HIGH:
         return 1
     return 0
+
 
 def gpio_get_acid_level():
     level1 = -1
@@ -744,6 +761,7 @@ def gpio_get_acid_level():
         else:
             level2 = 0
     return level1, level2
+
 
 def is_lcd_off(images):
     lcd_off = True
@@ -818,6 +836,7 @@ def find_newest_file(path, file_pattern="*"):
 
     newest_file = max(list_of_files, key=os.path.getmtime)
     return newest_file
+
 
 def log_data_init():
     global log_data_last_rotate
@@ -915,83 +934,86 @@ def log_data_rotate():
     log_data_last_rotate = datetime.now()
 
 
+app = FastAPI()
 httpd = None
 server_thread = None
 server_stop_event = None
 
-class DataHandler(SimpleHTTPRequestHandler):
-    def do_GET(self):
-        if self.path == '/' or self.path == '/phall':
-          try:
-            self.send_response(200)
-            self.send_header("Content-type", "text/html")
-            self.end_headers()
-            html_str = """
-            <!DOCTYPE html>
-              <html lang="en">
-                <head>
-                  <meta charset="utf-8">
-                  <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fix=no">
-                  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@4.0.0/dist/css/bootstrap.min.css" integrity="sha384-Gn5384xqQ1aoWXA+058RXPxPg6fy4IWvTNh0E263XmFcJlSAwiGgFAW/dAiS6JXm" crossorigin="anonymous">
-                  <title>Chem Feeder pH</title>
-                  <style>
-                  .nav-link:hover {
-                    color: white !important;
-                  }
-                  </style>
-                </head>
-                <body>
-            """
-            self.wfile.write(bytes(html_str, "utf-8"))
-            if self.path == '/phall':
-                html_str = """
-                    <nav class="navbar navbar-light bg-primary">
-                        <a class="nav-link"></a>
-                        <h3 class="nav-brand" style="color:white">pH Chem Feeder</h3>
-                        <div>
-                            <ul class="navbar-nav ml-auto">
-                                <li class="navbar-item">
-                                    <a class="nav-link"  href="/">Zoom</a>
-                                </li>
-                            </ul>
-                        </div>
-                    </nav>    
-                 """
-                self.wfile.write(bytes(html_str, "utf-8"))
-                self.wfile.write(bytes(create_html_ph_graph("pH Values", 0, 9, False), "utf-8"))
-            else:
-                html_str = """
-                    <nav class="navbar navbar-light bg-primary">
-                        <a class="nav-link"></a>
-                        <h3 class="nav-brand" style="color:white">pH Chem Feeder</h3>
-                        <div>
-                            <ul class="navbar-nav ml-auto">
-                                <li class="navbar-item">
-                                    <a class="nav-link" href="/phall">Full</a>
-                                </li>
-                            </ul>
-                        </div>
-                    </nav>    
-                 """
-                self.wfile.write(bytes(html_str, "utf-8"))
-                self.wfile.write(bytes(create_html_ph_graph("pH Values", 7, 8, True), "utf-8"))
-            self.wfile.write(b"</body></html>")
+@app.get("/", response_class=HTMLResponse)
+async def read_root():
+    html_hdr_str = """
+    <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fix=no">
+            <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@4.0.0/dist/css/bootstrap.min.css" integrity="sha384-Gn5384xqQ1aoWXA+058RXPxPg6fy4IWvTNh0E263XmFcJlSAwiGgFAW/dAiS6JXm" crossorigin="anonymous">
+            <title>Chem Feeder pH</title>
+            <style>
+            .nav-link:hover {
+            color: white !important;
+            }
+            </style>
+        </head>
+        <body>
+            <nav class="navbar navbar-light bg-primary">
+                <a class="nav-link"></a>
+                <h3 class="nav-brand" style="color:white">pH Chem Feeder</h3>
+                <div>
+                    <ul class="navbar-nav ml-auto">
+                        <li class="navbar-item">
+                            <a class="nav-link" href="/phall">Full</a>
+                        </li>
+                    </ul>
+                </div>
+            </nav>    
+    """
+    html_mid_str = create_html_ph_graph("pH Values", 7, 8, True)
+    html_end_str = """
+        </body></html>
+    """
+    return HTMLResponse(content=html_hdr_str + html_mid_str + html_end_str, status_code=200)
 
-          except Exception as e:
-            print(f"Failed to process HTT response {e}")
-            return
-        else:
-            super().do_GET()
 
-def start_server_thread(event):
-    global httpd
+@app.get("/phall", response_class=HTMLResponse)
+async def read_phall():
+    html_hdr_str = """
+    <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fix=no">
+            <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@4.0.0/dist/css/bootstrap.min.css" integrity="sha384-Gn5384xqQ1aoWXA+058RXPxPg6fy4IWvTNh0E263XmFcJlSAwiGgFAW/dAiS6JXm" crossorigin="anonymous">
+            <title>Chem Feeder pH</title>
+            <style>
+            .nav-link:hover {
+            color: white !important;
+            }
+            </style>
+        </head>
+        <body>
+            <nav class="navbar navbar-light bg-primary">
+                <a class="nav-link"></a>
+                <h3 class="nav-brand" style="color:white">pH Chem Feeder</h3>
+                <div>
+                    <ul class="navbar-nav ml-auto">
+                        <li class="navbar-item">
+                            <a class="nav-link"  href="/">Zoom</a>
+                        </li>
+                    </ul>
+                </div>
+            </nav>    
+    """
 
-    socketserver.TCPServer.allow_reuse_address = True
-    httpd = socketserver.TCPServer((web_addr, web_port), DataHandler)
-    httpd.timeout = 1
-    while not event.is_set():
-        httpd.handle_request()
-    httpd.shutdown()
+    html_mid_str = create_html_ph_graph("pH Values", 0, 9, False)
+    html_end_str = """
+        </body></html>
+    """
+    return HTMLResponse(content=html_hdr_str + html_mid_str + html_end_str, status_code=200)
+
+
+def web_server_thread(event):
+    uvicorn.run(app, host=web_addr, port=web_port)
 
 
 def start_server_ph():
@@ -999,9 +1021,10 @@ def start_server_ph():
     global server_stop_event
     
     server_stop_event = threading.Event()
-    server_thread = threading.Thread(target=start_server_thread, args=(server_stop_event,))
+    server_thread = threading.Thread(target=web_server_thread, args=(server_stop_event,))
     server_thread.daemon = True
     server_thread.start()
+
 
 def create_html_ph_graph(title, v_min, v_max, ignore_zero):
     df = log_data.copy()
@@ -1070,6 +1093,7 @@ def create_html_ph_graph(title, v_min, v_max, ignore_zero):
 # text = pytesseract.image_to_string(image)
 # if "ALARM" in text:
 #   print("ALARM")
+
 
 if __name__ == "__main__":
     app_parser_arguments()
@@ -1230,4 +1254,3 @@ if __name__ == "__main__":
 
     if mqtt_pub:
         mqtt_close()
-
