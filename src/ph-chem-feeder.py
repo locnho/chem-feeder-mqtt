@@ -20,6 +20,7 @@ from plotly.subplots import make_subplots
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 import uvicorn
+import sqlite3
 
 
 PICAM = 1                 # Set to 1 to support RPI Camera, otherise, use the -f argument
@@ -162,8 +163,7 @@ save_filename = ""              # File name to saving image on detect digits fai
 first_image = 1                 # Indicate first image capture from camera 
 use_gpio = 0                    # Use to GPIO if 1
 self_test = False               # Run self test if True
-log_filename = ""               # File name to log pH data
-log_data = pd.DataFrame(columns=['Date', 'pH', 'Alarm'])    # Data frame of pH data
+log_data_filename = ""          # File name to log pH data
 web_addr = "0.0.0.0"            # Web address to serving pH data (default all interfaces)
 web_port = 8025                 # Web port to serving pH data
 sample_interval = 30            # Sample interval in second
@@ -180,7 +180,7 @@ def app_parser_arguments():
     global save_filename
     global use_gpio
     global self_test
-    global log_filename
+    global log_data_filename
     global web_addr
     global web_port
     global gpio_alarm_pin
@@ -197,11 +197,11 @@ def app_parser_arguments():
     parser.add_argument('--user', help='MQTT user', default=mqtt_username)
     parser.add_argument('--password', help='MQTT password', default=mqtt_password)
     parser.add_argument('--addr', help='MQTT address', default = "127.0.0.1")
-    parser.add_argument('--port', type=int, help='MQTT port', default =1883)
+    parser.add_argument('--port', type=int, help='MQTT port', default=1883)
     parser.add_argument('--save', type=str, help='If provided and detection failure, save capture image to file', default="")
     parser.add_argument('--gpio', type=int, nargs="*", help=f"Enable GPIO for alarm,acid level1, and acid level2 detection\nDefault is {gpio_alarm_pin} {gpio_acid_level_pin1} {gpio_acid_level_pin2}")
-    parser.add_argument('--selftest', action="store_true", help="Run self-test and exit", default = False)
-    parser.add_argument('--datalog', type=str, help="File name for pH data logging/web site", default =log_filename)
+    parser.add_argument('--selftest', action="store_true", help="Run self-test and exit", default=False)
+    parser.add_argument('--datalog', type=str, help="File name for pH data logging/web site", default=log_data_filename)
     parser.add_argument('--webaddr', type=str, help="Web server address", default=web_addr)
     parser.add_argument('--webport', type=str, help="Web server port", default=web_port)
     parser.add_argument('--sample', type=int, help="Sample interval in seconds", default=sample_interval)
@@ -220,7 +220,7 @@ def app_parser_arguments():
     save_filename = args.save
     use_gpio = args.gpio
     self_test = args.selftest
-    log_filename = args.datalog
+    log_data_filename = args.datalog
     web_addr = args.webaddr
     web_port = args.webport
     if args.gpio is not None and len(args.gpio) == 3:
@@ -823,94 +823,55 @@ def selftest():
         print(f"FAILED {failed}/{total}")
 
 
-date_format_string = "%Y-%m-%d %H:%M:%S.%f"
 log_data_last_rotate = None
-log_data_last_saved = None
-log_data_dirty = True
-
-
-def find_newest_file(path, file_pattern="*"):
-    list_of_files = glob.glob(os.path.join(path, file_pattern))
-    if not list_of_files:
-        return None
-
-    newest_file = max(list_of_files, key=os.path.getmtime)
-    return newest_file
+log_data_last_ph = -1
+log_data_last_ph_time = datetime.now()
+db_ph = None
 
 
 def log_data_init():
     global log_data_last_rotate
-    global log_data
+    global log_data_filename
+    global db_ph
+
+    if len(log_data_filename) <= 0:
+        return
 
     log_data_last_rotate = datetime.now()
+    db_ph = sqlite3.connect(log_data_filename)
+    cursor = db_ph.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS PH (Date INTEGER PRIMARY KEY, pH REAL, Alarm INTEGER)
+    ''')
+    db_ph.commit()
+    if DBG_LEVEL & 8:
+        print(f"Load pH data from {log_data_filename}")
 
-    try:
-        path, filename = os.path.split(log_filename)
-        data_file = find_newest_file(path, filename + "*")
-        if data_file is not None:
-            print(f"Loading data from {data_file}")                
-            log_data = pd.read_csv(data_file)
-            log_data['Date'] = pd.to_datetime(log_data['Date'], format=date_format_string)
 
-    except FileNotFoundError:
+def log_data_save(ph: float, alarm: int):
+    global db_ph
+    global log_data_last_ph
+    global log_data_last_ph_time
+
+    if db_ph is None:
         return
 
-    except Exception as e:
-        print(f"Unable to open log file {log_filename} error: {e}")                
-
-
-def log_data_save():
-    global log_data_last_saved
-    global log_data_dirty
-
-    #
-    # Only save every hour
-    if log_data_last_saved is not None:
-        time_elapsed = datetime.now() - log_data_last_saved
-        if time_elapsed < timedelta(hours=1):
-            return 
-   
-    #
-    # Only save if data added
-    if log_data_dirty == False:
-        return
-
-    #
-    # Create directory if required
-    directory, filename = os.path.split(log_filename)
-    os.makedirs(directory, exist_ok=True)
-
-    #
-    # Write to new file
-    new_filename = log_filename + datetime.now().strftime(".%Y%m%d-%H%M%S.%f")
-    try:
-        if os.path.exists(new_filename):
-            os.remove(new_filename)
-        if DBG_LEVEL & 0x8:
-            print(f"Saving {len(log_data)} data to file {new_filename}")
-        log_data.to_csv(new_filename, index=False)
-    except Exception as e:
-        print(f"Fail to save data new file {new_filename}: {e}")
-        return
-
-    #
-    # Remove file if more than 10
-    files = [os.path.join(directory, f) for f in glob.glob(log_filename + "*") if os.path.isfile(os.path.join(directory, f))]
-    sorted_files = sorted(files, key=os.path.getmtime)
-    if len(sorted_files) > 10:
-        total = len(sorted_files)
-        for f in sorted_files[:total-10]:
-            if DBG_LEVEL & 0x8:
-                print(f"Removing file {f}")
-            os.remove(f)
-
-    log_data_last_saved = datetime.now()
-    log_data_dirty = False
+    cursor = db_ph.cursor()
+    tn = int(datetime.now().timestamp())
+    cursor.execute(f"INSERT INTO PH (Date, pH, Alarm) VALUES ({tn}, {ph}, {alarm})")
+    db_ph.commit()
+    log_data_last_ph = ph
+    log_data_last_ph_time = datetime.now()
+    if DBG_LEVEL & 8:
+        print(f"Save pH data to {log_data_filename}")
 
 
 def log_data_rotate():
-    global log_data
     global log_data_last_rotate
+    global db_ph
+
+    if db_ph is None:
+        return
 
     time_elapsed = datetime.now() - log_data_last_rotate
     if time_elapsed < timedelta(hours=24):
@@ -918,20 +879,28 @@ def log_data_rotate():
 
     #
     # Remove date over a year
-    date_object = log_data.iloc[-1, 0]
+    cursor = db_ph.cursor()
+    cursor.execute(f"SELECT Date FROM PH ORDER BY Date")
+    row = cursor.fetchone()
+    date_object = datetime.fromtimestamp(row[0])
     date_object -= relativedelta(years=1)
 
-    to_delete = 0
-    for i in range(len(log_data)):
-        date_row = log_data.iloc[i, 0]
-        if data_row <= date_object:
-            break
-        to_delete += 1
+    del_sql = f"DELETE FROM pH WHERE Date < ?"
+    cursor.execute(del_sql, (date_object.timestamp(), ))
+    db_ph.commit()
+    if DBG_LEVEL & 8:
+        print("Rotate pH data from {log_data_filename}")
     
-    if to_delete > 0:
-        log_data.drop(index=df.index[:to_delete], axis=0, inplace=True)
-
     log_data_last_rotate = datetime.now()
+
+
+def get_log_data():
+    db = sqlite3.connect(log_data_filename)
+    cursor = db.cursor()
+    df = pd.read_sql_query(f"SELECT * FROM PH ORDER BY Date", db)
+    df.columns = ['Date', 'pH', 'Alarm']
+    db.close()
+    return df
 
 
 app = FastAPI()
@@ -1027,11 +996,11 @@ def start_server_ph():
 
 
 def create_html_ph_graph(title, v_min, v_max, ignore_zero):
-    df = log_data.copy()
+    df = get_log_data()
     if ignore_zero:
         df = df[df['pH'] > 0]
     df.rename(columns={'Date':'Date-Str'}, inplace=True)
-    df['Date'] = pd.to_datetime(df['Date-Str'])
+    df['Date'] = pd.to_datetime(df['Date-Str'], unit='s')
     # Create figure with secondary y-axis
     fig = make_subplots(specs=[[{"secondary_y": True}]])
     # Add traces
@@ -1105,7 +1074,7 @@ if __name__ == "__main__":
 
     print(f"      Alarm pin: {gpio_alarm_pin}")
     print(f"Acid Level pins: {gpio_acid_level_pin1} {gpio_acid_level_pin2}")
-    print(f"  Data Log file: {log_filename}")
+    print(f"  Data Log file: {log_data_filename}")
     print(f"       Web Data: {web_addr}:{web_port}")
 
     if len(file_name) > 0:
@@ -1113,7 +1082,7 @@ if __name__ == "__main__":
     else:
         print(f"          Input: camera", flush=True)
 
-    if len(log_filename) > 0:
+    if len(log_data_filename) > 0:
         log_data_init()
 
     if mqtt_pub:
@@ -1127,7 +1096,7 @@ if __name__ == "__main__":
         import RPi.GPIO as GPIO
         gpio_init()
 
-    if len(log_filename) > 0:
+    if len(log_data_filename) > 0:
         start_server_ph()
 
     while True:
@@ -1171,6 +1140,11 @@ if __name__ == "__main__":
                 in_loop += 1
                 rc, ph = extract_digits(image)
                 if rc == ERR_SUCCESS:
+                    if ph <= 3.0:
+                        if len(save_filename) > 0 and image is not None:
+                            directory, filename = os.path.split(save_filename)
+                            file, ext = os.path.splitext(filename)
+                            cv2.imwrite(f"{directory}{os.sep}{file}_3l_{out_loop}{in_loop}{ext}", image)
                     break
 
                 if rc == ERR_NODIGITS:
@@ -1212,42 +1186,30 @@ if __name__ == "__main__":
             mqtt_publish_ph_alarm(alarm)
             mqtt_publish_acid_level(acid_level1, acid_level2)
 
-        if len(log_filename) > 0:
-            #
-            # Rotate data first
-            log_data_rotate()
-
+        if len(log_data_filename) > 0:
             #
             # Log data
             record_data = False
-            if log_data.shape[0] == 0:
-                # First one, always log
-                record_data = True
-            elif not math.isclose(log_data.iloc[-1, 1], ph):
+            if not math.isclose(log_data_last_ph, ph):
                 # Value changed
                 record_data = True
             elif ph != 0.0:
                 #
                 # Log every 15 minutes for non-0
-                time_elpase = datetime.now() - log_data.iloc[-1, 0]
+                time_elpase = datetime.now() - log_data_last_ph_time
                 if time_elpase.total_seconds() >= 15*60:
                     record_data = True
 
             if record_data:
-                row = { "Date" : datetime.now(), "pH" : ph, "Alarm" : alarm }
-                log_data.loc[len(log_data)] = row
-                log_data_dirty = True
+                log_data_rotate()
+                log_data_save(ph, alarm)
 
-            #
-            # Save data every hour or first one
-            log_data_save()
-        
         time_check = time_start + timedelta(seconds=sample_interval)
         time_delay = time_check - datetime.now()
         if time_delay.total_seconds() > 0:
             time.sleep(time_delay.total_seconds())
 
-    if len(log_filename) > 0:
+    if len(log_data_filename) > 0:
         httpd.shutdown()
         server_stop_event.set()
         server_thread.join(timeout=5)
