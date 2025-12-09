@@ -858,6 +858,8 @@ def log_data_save(ph: float, alarm: int):
     tn = int(datetime.now().timestamp())
     cursor.execute(f"INSERT INTO PH (Date, pH, Alarm) VALUES ({tn}, {ph}, {alarm})")
     db_ph.commit()
+    log_data_last_ph = ph
+    log_data_last_ph_time = datetime.now()
     if DBG_LEVEL & 8:
         print(f"Save pH data to {log_data_filename}")
 
