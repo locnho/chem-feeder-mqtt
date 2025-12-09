@@ -850,6 +850,8 @@ def log_data_init():
 
 def log_data_save(ph: float, alarm: int):
     global db_ph
+    global log_data_last_ph
+    global log_data_last_ph_time
 
     if db_ph is None:
         return
