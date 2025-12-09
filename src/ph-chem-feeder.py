@@ -995,8 +995,8 @@ def create_html_ph_graph(title, v_min, v_max, ignore_zero):
     df = get_log_data()
     if ignore_zero:
         df = df[df['pH'] > 0]
-    df.rename(columns={'Date':'Date-Str'}, inplace=True)
-    df['Date'] = pd.to_datetime(df['Date-Str'], unit='s')
+    df.rename(columns={'Date':'Date-UTC'}, inplace=True)
+    df['Date'] = df['Date-UTC'].apply(datetime.fromtimestamp)
     # Create figure with secondary y-axis
     fig = make_subplots(specs=[[{"secondary_y": True}]])
     # Add traces
