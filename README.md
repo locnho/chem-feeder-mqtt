@@ -38,6 +38,24 @@ This requires a level shifter as the voltage is 5V and RPI 5 requires 3.3V. Then
 
 To ensure that the junction box is sealed, apply some window sealant on the wire exit.
 
+## Relay & Wiring Diagram
+
+The Acid Dosing Controller can dangerous. As such the following safety measures are employed:
+
+* Acid Dosing Controller is enabled only if the system is in Pool mode
+* Acid injector is mounted at the Pool return pipe only
+* Sensor is used to ensure that the Acid Dosing Controller is only enabled if the pump is actually running
+* A timer to limit the amound of time the Acid Dosing Controller is enabled (avoid hardwaer malfunction and dump a large amount of acid to the pool)
+
+To implement the above, the following hardwares are used:
+
+* A 12V dual relay to disable Acid Dosing Controller if it is NOT in pool mode and no water flow
+* A 12V 7 day timer
+
+12V is used as fan are also 12V. Fan can be added to cool the electronic in the enclosure box. The wire diagram is shown below.
+
+<img src="misc/ph-dosing-wire-diagram.drawio.png" width="512"/>
+
 ## Mounting
 
 To mount various hardware, use Aluminum DIN Rails (https://en.wikipedia.org/wiki/DIN_rail).
