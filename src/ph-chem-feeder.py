@@ -278,7 +278,7 @@ def sort_contours_left_to_right_within_lines(contours, bounding_boxes, y_thresho
     return sorted_contours, [cv2.boundingRect(c) for c in sorted_contours] # Return sorted contours and their new bounding boxes
 
 
-def extract_digits_once(image, threshold_val = 64, blurr_val = 5):
+def extract_digits_once(image, threshold_val = 64, blurr_val = 5, morpho = False):
     if crop_rect[0] > 0 or crop_rect[1] > 0 or crop_rect[2] > 0 or crop_rect[3] > 0:
         img_height, img_width = image.shape
         image = image[crop_rect[1]:img_height - crop_rect[3], crop_rect[0]:img_width - crop_rect[2]]
@@ -387,12 +387,13 @@ def extract_digits_once(image, threshold_val = 64, blurr_val = 5):
             cv2.imshow('Thresh', imutils.resize(image_thresh, 256))
             cv2.waitKey(0)
             cv2.destroyAllWindows()
-        # kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (1, 5))
-        # image_thresh = cv2.morphologyEx(image_thresh, cv2.MORPH_OPEN, kernel)
-        # if DBG_LEVEL & 2:
-        #     cv2.imshow('Morpho', image_thresh)
-        #     cv2.waitKey(0)
-        #     cv2.destroyAllWindows()
+        if morpho:
+            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (1, 5))       
+            image_thresh = cv2.morphologyEx(image_thresh, cv2.MORPH_OPEN, kernel)
+            if DBG_LEVEL & 2:
+                cv2.imshow('Morpho', image_thresh)
+                cv2.waitKey(0)
+                cv2.destroyAllWindows()
 
         kernel = np.ones((3,3),np.uint8)
         image_dilation = cv2.dilate(image_thresh, kernel, iterations = 1)
@@ -520,20 +521,28 @@ def extract_digits_once(image, threshold_val = 64, blurr_val = 5):
 
 
 def extract_digits(image_gray):
-    rc, ph = extract_digits_once(image_gray)
+    rc, ph = extract_digits_once(image_gray, 64, 5, False)
     if rc != ERR_SUCCESS:
-        rc, ph = extract_digits_once(image_gray, 127, 7)
+        rc, ph = extract_digits_once(image_gray, 64, 5, True)
+    if rc != ERR_SUCCESS:
+        rc, ph = extract_digits_once(image_gray, 127, 7, False)   
     if rc != ERR_SUCCESS:
         expos_list = [
-            (6.195, -0.5),
-            (2.5, 0),
-            (2.75, -0.36),
-            (3, -0.5),
-            (1.36, -0.5),
+           (6.195, -0.5),
+           (2.5, 0),
+           (2.75, -0.36),
+           (3, -0.5),
+           (1.36, -0.5),
+           (1.25, -1.0),
         ]
         for expos in expos_list:
             image_exposure = cv2.convertScaleAbs(image_gray, alpha=expos[0], beta=expos[1])
             rc, ph = extract_digits_once(image_exposure)
+            if rc == ERR_SUCCESS:
+                return rc, ph
+        for expos in expos_list:
+            image_exposure = cv2.convertScaleAbs(image_gray, alpha=expos[0], beta=expos[1])
+            rc, ph = extract_digits_once(image_exposure, 64, 5, True)
             if rc == ERR_SUCCESS:
                 return rc, ph
 
@@ -782,7 +791,7 @@ def is_lcd_off(images):
         image_bw_percentage = image_bw_total_one / (img_height * img_width)
         if DBG_LEVEL & 1:
             print(image_bw_percentage)
-        if image_bw_percentage > 0.10:
+        if image_bw_percentage > 0.12:
             lcd_off = False
             image_pair.append((image_bw_percentage, image))
 
