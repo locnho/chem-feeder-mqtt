@@ -25,16 +25,17 @@ import sqlite3
 
 PICAM = 1                 # Set to 1 to support RPI Camera, otherise, use the -f argument
 RPIGPIO = 1               # Set to 1 to support GPIO pin below. Must include the --gpio argument as well
-gpio_alarm_pin = 16       # physical GPIO board number for pH alarm detection (active low). Set to -1 to ignore
+gpio_alarm_pin = 26       # physical GPIO board number for pH alarm detection (active low). Set to -1 to ignore
 gpio_acid_level_pin1 = 27 # physical GPIO board number for acid tank level low. Set to -1 to ignore
-gpio_acid_level_pin2 = 22 # physical GPIO board number for acid tank at 50%. Se to -1 to ignore
+gpio_acid_level_pin2 = 22 # physical GPIO board number for acid tank at 50%. Set to -1 to ignore
 
-DBG_LEVEL = 0               # No debugging
-#DBG_LEVEL = 1              # Show image of detecting the LCD rectangle
-#DBG_LEVEL = 2              # Show image of detecting the digit rectangle
-#DBG_LEVEL = 4              # Show info and image of detection the individual digit
-#DBG_LEVEL = 8              # Show data saving
-#DBG_LEVEL = 1 + 2 + 4 + 8  # Show all
+DBG_LEVEL = 0                       # No debugging
+#DBG_LEVEL = 1                      # Show image of detecting the LCD rectangle
+#DBG_LEVEL = 2                      # Show image of detecting the digit rectangle
+#DBG_LEVEL = 4                      # Show info and image of detection the individual digit
+#DBG_LEVEL = 8                      # Show data saving
+#DBG_LEVEL = 16                     # Show GPIO info
+#DBG_LEVEL = 1 + 2 + 4 + 8 + 16     # Show all
 
 verbose = 1             # 1 - mimimum
 verbose = 1 + 2         # plus MQTT publish
@@ -218,17 +219,16 @@ def app_parser_arguments():
     mqtt_addr = args.addr
     mqtt_port = args.port
     save_filename = args.save
-    use_gpio = args.gpio
     self_test = args.selftest
     log_data_filename = args.datalog
     web_addr = args.webaddr
     web_port = args.webport
-    if args.gpio is not None and len(args.gpio) == 3:
-        gpio_alarm_pin = args.gpio[0]
-        gpio_acid_level_pin1 = args.gpio[1]
-        gpio_acid_level_pin2 = args.gpio[2]
-    elif args.gpio is not None and len(args.gpio) != 0:
-        print("ignore GPIO setting and use default")
+    if args.gpio is not None:
+        use_gpio = 1
+        if len(args.gpio) == 3:
+            gpio_alarm_pin = args.gpio[0]
+            gpio_acid_level_pin1 = args.gpio[1]
+            gpio_acid_level_pin2 = args.gpio[2]
     sample_interval = args.sample
     if args.vv:
         verbose = 1 + 2 + 4
@@ -748,10 +748,16 @@ def gpio_acid_level2_configured():
 
 def gpio_get_alarm():
     if gpio_alarm_pin == -1:
+        if DBG_LEVEL & 16:
+            print("GPIO disabled")
         return 0
 
     if GPIO.input(gpio_alarm_pin) == GPIO.HIGH:
+        if DBG_LEVEL & 16:
+            print("raw alarm: HIGH")
         return 1
+    if DBG_LEVEL & 16:
+        print("raw alarm: LOW")
     return 0
 
 
@@ -1081,8 +1087,6 @@ if __name__ == "__main__":
         selftest()
         exit(0)
 
-    print(f"      Alarm pin: {gpio_alarm_pin}")
-    print(f"Acid Level pins: {gpio_acid_level_pin1} {gpio_acid_level_pin2}")
     print(f"  Data Log file: {log_data_filename}")
     print(f"       Web Data: {web_addr}:{web_port}")
 
@@ -1103,6 +1107,8 @@ if __name__ == "__main__":
 
     if RPIGPIO and use_gpio:
         import RPi.GPIO as GPIO
+        print(f"      Alarm pin: {gpio_alarm_pin}")
+        print(f"Acid Level pins: {gpio_acid_level_pin1} {gpio_acid_level_pin2}")
         gpio_init()
 
     if len(log_data_filename) > 0:
@@ -1116,7 +1122,8 @@ if __name__ == "__main__":
         for retry in range(3):
             out_loop += 1
             rc = ERR_SUCCESS
-            alarm = 0
+            alarm_raw = 0
+            alarm_report = 0
             acid_level1 = -1
             acid_level2 = -1
             ph = 0.0
@@ -1129,7 +1136,7 @@ if __name__ == "__main__":
                     ph = 0.0
             else:
                 if RPIGPIO and use_gpio:
-                    alarm = gpio_get_alarm()
+                    alarm_raw = gpio_get_alarm()
                     acid_level1, acid_level2 = gpio_get_acid_level()
 
                 if rc == ERR_SUCCESS:
@@ -1176,9 +1183,10 @@ if __name__ == "__main__":
         # Compute pH value
         if rc == ERR_LCDOFF:
             ph = 0.0
-            alarm = 0   # Force alarm to off when LCD is off
+            alarm_report = 0   # Force alarm to off when LCD is off
         else:
-            if alarm and rc != ERR_SUCCESS:
+            alarm_report = alarm_raw
+            if alarm_raw and rc != ERR_SUCCESS:
                 ph = 1.0
             elif rc != ERR_SUCCESS:
                 ph = 2.0
@@ -1188,11 +1196,11 @@ if __name__ == "__main__":
         else:
             lcd_text = "ON"
         print(datetime.now().strftime("%H:%M:%S: "), end="")
-        print(f"pH {ph} alarm {alarm} LCD {lcd_text}", flush=True)
+        print(f"pH {ph} alarm(raw) {alarm_report} ({alarm_raw}) LCD {lcd_text}", flush=True)
 
         if mqtt_pub:
             mqtt_publish("aqualinkd/CHEM/pH/set", f"{ph:.2f}")
-            mqtt_publish_ph_alarm(alarm)
+            mqtt_publish_ph_alarm(alarm_report)
             mqtt_publish_acid_level(acid_level1, acid_level2)
 
         if len(log_data_filename) > 0:
@@ -1211,7 +1219,7 @@ if __name__ == "__main__":
 
             if record_data:
                 log_data_rotate()
-                log_data_save(ph, alarm)
+                log_data_save(ph, alarm_report)
 
         time_check = time_start + timedelta(seconds=sample_interval)
         time_delay = time_check - datetime.now()

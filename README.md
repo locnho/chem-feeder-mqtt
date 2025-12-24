@@ -102,7 +102,7 @@ To mount the camera over the LCD display, use galvanized interlocking hanger str
 
 # Configuration with RPI GPIO
 
-GPIO Pin 16 - Alarm: This pin is used to detect pH controller alarm (active high). Connect to controller Normal Open (NO) side.
+GPIO Pin 26 - Alarm: This pin is used to detect pH controller alarm (active high). Connect to controller Normal Open (NO) side.
 
 GPIO Pin 27 - Acid Tank Level1: When this is asserted low, acid tank is below 1%.
 
