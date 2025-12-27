@@ -35,6 +35,7 @@ DBG_LEVEL = 0                       # No debugging
 #DBG_LEVEL = 4                      # Show info and image of detection the individual digit
 #DBG_LEVEL = 8                      # Show data saving
 #DBG_LEVEL = 16                     # Show GPIO info
+#DBG_LEVEL = 32                     # Show each iteration of decoding an image
 #DBG_LEVEL = 1 + 2 + 4 + 8 + 16     # Show all
 
 verbose = 1             # 1 - mimimum
@@ -1151,31 +1152,52 @@ if __name__ == "__main__":
                 # Break if LCD is off or unit is powered off
                 break
 
-            in_loop = 0
+            result_glist = []
+            result_blist = []
+            bad_image = None
+            found_good = False
+            idx = 0
             for image in images:
-                in_loop += 1
                 rc, ph = extract_digits(image)
+                if DBG_LEVEL & 32:
+                    print(f"Image[{idx}]: {rc} {ph}")
                 if rc == ERR_SUCCESS:
-                    if ph <= 3.0:
-                        if len(save_filename) > 0 and image is not None:
-                            directory, filename = os.path.split(save_filename)
-                            file, ext = os.path.splitext(filename)
-                            cv2.imwrite(f"{directory}{os.sep}{file}_3l_{out_loop}{in_loop}{ext}", image)
-                    break
+                    result_glist.append((rc, ph))
+                    if len(result_glist) >= 2 and result_glist[-1][1] == result_glist[-2][1]:
+                        found_good = True
+                        break
+                else:
+                    result_blist.append((rc, ph))
+                    bad_image = image
+                idx += 1
 
-                if rc == ERR_NODIGITS:
-                    print(f"Image{out_loop}.{in_loop}: Not enough digits on LCD", flush=True)
-                if rc == ERR_NODIGIT:
-                    print(f"Image{out_loop}.{in_loop}: Not enough digit on LCD", flush=True)
-                if rc == ERR_NORECT:
-                    print(f"Image{out_loop}.{in_loop}: No digit on LCD", flush=True)
-                if rc == ERR_NOSCREEN_DETECTED:
-                    print(f"Image{out_loop}.{in_loop}: No screen detected", flush=True)
-        
-                if len(save_filename) > 0 and image is not None:
-                    directory, filename = os.path.split(save_filename)
-                    file, ext = os.path.splitext(filename)
-                    cv2.imwrite(f"{directory}{os.sep}{file}_{out_loop}{in_loop}{ext}", image)
+            if len(result_glist) >= 2:
+                if found_good:
+                    rc = result_glist[-1][0]
+                    ph = result_glist[-1][1]
+                else:
+                    rc = result_glist[0][0]
+                    ph = result_glist[0][1]
+            elif len(result_glist) == 1:
+                rc = result_glist[0][0]
+                ph = result_glist[0][1]
+            else:
+                rc = result_blist[0][0]
+                ph = result_blist[0][1]
+
+            if rc == ERR_NODIGITS:
+                print(f"Image{out_loop}: Not enough digits on LCD", flush=True)
+            if rc == ERR_NODIGIT:
+                print(f"Image{out_loop}: Not enough digit on LCD", flush=True)
+            if rc == ERR_NORECT:
+                print(f"Image{out_loop}: No digit on LCD", flush=True)
+            if rc == ERR_NOSCREEN_DETECTED:
+                print(f"Image{out_loop}: No screen detected", flush=True)
+    
+            if len(save_filename) > 0 and bad_image is not None:
+                directory, filename = os.path.split(save_filename)
+                file, ext = os.path.splitext(filename)
+                cv2.imwrite(f"{directory}{os.sep}{file}_{out_loop}{ext}", bad_image)
 
             if rc == ERR_SUCCESS:
                 break
