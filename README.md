@@ -245,6 +245,18 @@ The configuration setting:
         }
 ```
 
+# ORP Monitor Support
+
+It now supports for MQTT ORP monitor with AquaLinkD. If you publish ORP reading to AquaLinkD, it can monitor ORP values.
+
+ If you want to disable, add argument:
+
+```
+
+    --orp ""
+
+```
+
 # Misc Note
 
 If your camera is mounted at a different direction, use the "-r" parameter to rotate.

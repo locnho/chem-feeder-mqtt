@@ -21,6 +21,7 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 import uvicorn
 import sqlite3
+import serial
 
 
 PICAM = 1                 # Set to 1 to support RPI Camera, otherise, use the -f argument
@@ -36,6 +37,7 @@ DBG_LEVEL = 0                       # No debugging
 #DBG_LEVEL = 8                      # Show data saving
 #DBG_LEVEL = 16                     # Show GPIO info
 #DBG_LEVEL = 32                     # Show each iteration of decoding an image
+#DBG_LEVEL = 64                     # Show ORP information
 #DBG_LEVEL = 1 + 2 + 4 + 8 + 16     # Show all
 
 verbose = 1             # 1 - mimimum
@@ -170,6 +172,10 @@ web_addr = "0.0.0.0"            # Web address to serving pH data (default all in
 web_port = 8025                 # Web port to serving pH data
 sample_interval = 30            # Sample interval in second
 crop_rect = [0, 0, 0, 0]        # Crop value of all sides
+orp_mqtt_topic = "aqualinkd/CHEM/ORP" # ORP MQTT topic
+
+orp_reading = 0.0
+orp_reading_ts = None
 
 def app_parser_arguments():
     global file_name
@@ -191,6 +197,7 @@ def app_parser_arguments():
     global sample_interval
     global verbose
     global crop_rect
+    global orp_mqtt_topic
 
     parser = argparse.ArgumentParser(description='Chem Feeder MQTT')
     parser.add_argument('-f','--file', help='Input image file', default=file_name)
@@ -210,6 +217,7 @@ def app_parser_arguments():
     parser.add_argument('-v', action="store_true", help="Verbose level 1 and 2")
     parser.add_argument('-vv', action="store_true", help="Verbose level 1, 2, and 4")
     parser.add_argument('--crop', type=int, nargs=4, help=F"Amount of pixel to crop on left, top, right, bottom\nDefault is 0, 0, 0, 0.\nCrop is before rotate.")
+    parser.add_argument('--orp', type=str, help="ORP monitor MQTT topic. Set to \"\" to disable", default=orp_mqtt_topic)
 
     args = parser.parse_args()
     file_name = args.file
@@ -237,6 +245,8 @@ def app_parser_arguments():
         verbose = 1 + 2
     if args.crop is not None:
         crop_rect = [args.crop[0], args.crop[1], args.crop[2], args.crop[3]]
+    if args.orp is not None:
+        orp_mqtt_topic = args.orp
 
 
 def sort_contours_top_to_bottom(contours):
@@ -279,7 +289,7 @@ def sort_contours_left_to_right_within_lines(contours, bounding_boxes, y_thresho
     return sorted_contours, [cv2.boundingRect(c) for c in sorted_contours] # Return sorted contours and their new bounding boxes
 
 
-def extract_digits_once(image, threshold_val = 64, blurr_val = 5, morpho = False):
+def extract_digits_once(image, threshold_val = 64, blurr_val = 5, morpho = False, brightness = True):
     if crop_rect[0] > 0 or crop_rect[1] > 0 or crop_rect[2] > 0 or crop_rect[3] > 0:
         img_height, img_width = image.shape
         image = image[crop_rect[1]:img_height - crop_rect[3], crop_rect[0]:img_width - crop_rect[2]]
@@ -372,14 +382,15 @@ def extract_digits_once(image, threshold_val = 64, blurr_val = 5, morpho = False
             kernel = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]])
             image_resized = cv2.filter2D(image_resized, -1, kernel)
 
-        alpha = 1.05	# Adjust contrast (e.g., 1.5 for higher contrast)
-        beta = -115		# Adjust brightness (e.g., 30 for brighter)
-        # Apply the linear transformation: new_image = alpha * original_image + beta
-        image_resized = cv2.convertScaleAbs(image_resized, alpha=alpha, beta=beta)
-        if DBG_LEVEL & 2:
-            cv2.imshow('Brightness', imutils.resize(image_resized, 256))
-            cv2.waitKey(0)
-            cv2.destroyAllWindows()
+        if brightness:
+            alpha = 1.05	# Adjust contrast (e.g., 1.5 for higher contrast)
+            beta = -115		# Adjust brightness (e.g., 30 for brighter)
+            # Apply the linear transformation: new_image = alpha * original_image + beta
+            image_resized = cv2.convertScaleAbs(image_resized, alpha=alpha, beta=beta)
+            if DBG_LEVEL & 2:
+                cv2.imshow('Brightness', imutils.resize(image_resized, 256))
+                cv2.waitKey(0)
+                cv2.destroyAllWindows()
 
         # convert image to threshold and then apply a series of morphological
         # operations to cleanup the thresholded image
@@ -524,6 +535,8 @@ def extract_digits_once(image, threshold_val = 64, blurr_val = 5, morpho = False
 def extract_digits(image_gray):
     rc, ph = extract_digits_once(image_gray, 64, 5, False)
     if rc != ERR_SUCCESS:
+        rc, ph = extract_digits_once(image_gray, 64, 5, True, False)
+    if rc != ERR_SUCCESS:
         rc, ph = extract_digits_once(image_gray, 64, 5, True)
     if rc != ERR_SUCCESS:
         rc, ph = extract_digits_once(image_gray, 127, 7, False)   
@@ -602,16 +615,18 @@ def get_file_image(file_name):
 HOMEBRIDGE_DEVICE_TOPIC="homebridge"
 mqtt_client = None
 
-
 # Callback function for when the client connects to the broker
 def on_connect(client, userdata, flags, rc, properties):
     global mqtt_connected
+    global orp_mqtt_topic_match
+    global orp_mqtt_topic_match2
     
     if rc == 0:
         if verbose & 0x04:
             print("Connected to MQTT server")
         mqtt_connected = 1
-        #mqtt_client.subscribe(f"{HOMEBRIDGE_DEVICE_TOPIC}/#")
+        if len(orp_mqtt_topic) > 0:
+            mqtt_client.subscribe(orp_mqtt_topic)
         mqtt_create_devices()
     else:
         print(f"Failed to connect, return code {rc}\n")
@@ -625,8 +640,18 @@ def on_publish(client, userdata, mid, reason_code, properties):
 
 
 def on_message(client, userdata, msg):
-    if verbose & 0x04:
-        print(f"received message: {msg.payload.decode()} on topic {msg.topic}")
+    global orp_reading
+    global orp_reading_ts
+
+    topic = msg.topic.strip()
+    if len(orp_mqtt_topic) > 0 and orp_mqtt_topic == topic:
+        orp_reading = float(msg.payload.decode())
+        orp_reading_ts = datetime.now()
+        if verbose & 0x02:
+            print(datetime.now().strftime("%H:%M:%S: "), end="")
+            print(f"MQTT ORP {orp_reading}")
+    elif verbose & 0x02:
+        print(f"MQTT: {topic} message {msg.payload.decode()}")
 
 
 def mqtt_init():
@@ -669,7 +694,7 @@ def mqtt_publish(topic, message):
     global mqtt_connected
 
     if mqtt_connected:
-        if verbose & 0x02:
+        if verbose & 0x2:
             print(f"Publishing '{message}' topic '{topic}'")
         mqtt_client.publish(topic, message)
 
@@ -842,51 +867,74 @@ def selftest():
 log_data_last_rotate = None
 log_data_last_ph = -1
 log_data_last_ph_time = datetime.now()
-db_ph = None
+log_data_last_orp = 0.0
+log_data_last_orp_time = datetime.now()
+db_g = None
 
 
 def log_data_init():
     global log_data_last_rotate
     global log_data_filename
-    global db_ph
+    global db_g
 
     if len(log_data_filename) <= 0:
         return
 
     log_data_last_rotate = datetime.now()
-    db_ph = sqlite3.connect(log_data_filename)
-    cursor = db_ph.cursor()
+    db_g = sqlite3.connect(log_data_filename)
+    cursor = db_g.cursor()
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS PH (Date INTEGER PRIMARY KEY, pH REAL, Alarm INTEGER)
     ''')
-    db_ph.commit()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS ORP (Date INTEGER PRIMARY KEY, orp REAL)
+    ''')
+    db_g.commit()
     if DBG_LEVEL & 8:
         print(f"Load pH data from {log_data_filename}")
 
 
-def log_data_save(ph: float, alarm: int):
-    global db_ph
+def log_data_save_ph(ph: float, alarm: int):
+    global db_g
     global log_data_last_ph
     global log_data_last_ph_time
 
-    if db_ph is None:
+    if db_g is None:
         return
 
-    cursor = db_ph.cursor()
+    cursor = db_g.cursor()
     tn = int(datetime.now().timestamp())
     cursor.execute(f"INSERT INTO PH (Date, pH, Alarm) VALUES ({tn}, {ph}, {alarm})")
-    db_ph.commit()
+    db_g.commit()
     log_data_last_ph = ph
     log_data_last_ph_time = datetime.now()
     if DBG_LEVEL & 8:
         print(f"Save pH data to {log_data_filename}")
 
 
+def log_data_save_orp(orp: float):
+    global db_g
+    global log_data_last_orp
+    global log_data_last_orp_time
+
+    if db_g is None:
+        return
+
+    cursor = db_g.cursor()
+    tn = int(datetime.now().timestamp())
+    cursor.execute(f"INSERT INTO ORP (Date, orp) VALUES ({tn}, {orp})")
+    db_g.commit()
+    log_data_last_orp = orp
+    log_data_last_orp_time = datetime.now()
+    if DBG_LEVEL & 8:
+        print(f"Save ORP data to {log_data_filename}")
+
+
 def log_data_rotate():
     global log_data_last_rotate
-    global db_ph
+    global db_g
 
-    if db_ph is None:
+    if db_g is None:
         return
 
     time_elapsed = datetime.now() - log_data_last_rotate
@@ -895,27 +943,44 @@ def log_data_rotate():
 
     #
     # Remove date over a year
-    cursor = db_ph.cursor()
+    cursor = db_g.cursor()
     cursor.execute(f"SELECT Date FROM PH ORDER BY Date")
     row = cursor.fetchone()
     date_object = datetime.fromtimestamp(row[0])
     date_object -= relativedelta(years=1)
-
-    del_sql = f"DELETE FROM pH WHERE Date < ?"
+    del_sql = f"DELETE FROM PH WHERE Date < ?"
     cursor.execute(del_sql, (date_object.timestamp(), ))
-    db_ph.commit()
+    
+    cursor.execute(f"SELECT Date FROM ORP ORDER BY Date")
+    row = cursor.fetchone()
+    date_object = datetime.fromtimestamp(row[0])
+    date_object -= relativedelta(years=1)
+
+    del_sql = f"DELETE FROM ORP WHERE Date < ?"
+    cursor.execute(del_sql, (date_object.timestamp(), ))
+
+    db_g.commit()
     if DBG_LEVEL & 8:
-        print("Rotate pH data from {log_data_filename}")
+        print("Rotate pH/ORP data from {log_data_filename}")
     
     log_data_last_rotate = datetime.now()
 
 
-def get_log_data():
-    db = sqlite3.connect(log_data_filename)
-    cursor = db.cursor()
-    df = pd.read_sql_query(f"SELECT * FROM PH ORDER BY Date", db)
+def get_log_data_ph():
+    db_l = sqlite3.connect(log_data_filename)
+    cursor = db_l.cursor()
+    df = pd.read_sql_query(f"SELECT * FROM PH ORDER BY Date", db_l)
     df.columns = ['Date', 'pH', 'Alarm']
-    db.close()
+    db_l.close()
+    return df
+
+
+def get_log_data_orp():
+    db_l = sqlite3.connect(log_data_filename)
+    cursor = db_l.cursor()
+    df = pd.read_sql_query(f"SELECT * FROM ORP ORDER BY Date", db_l)
+    df.columns = ['Date', 'orp']
+    db_l.close()
     return df
 
 
@@ -933,7 +998,7 @@ async def read_root():
             <meta charset="utf-8">
             <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fix=no">
             <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@4.0.0/dist/css/bootstrap.min.css" integrity="sha384-Gn5384xqQ1aoWXA+058RXPxPg6fy4IWvTNh0E263XmFcJlSAwiGgFAW/dAiS6JXm" crossorigin="anonymous">
-            <title>Chem Feeder pH</title>
+            <title>pH/ORP Monitor</title>
             <style>
             .nav-link:hover {
             color: white !important;
@@ -943,7 +1008,7 @@ async def read_root():
         <body>
             <nav class="navbar navbar-light bg-primary">
                 <a class="nav-link"></a>
-                <h3 class="nav-brand" style="color:white">pH Chem Feeder</h3>
+                <h3 class="nav-brand" style="color:white">pH/ORP Monitor</h3>
                 <div>
                     <ul class="navbar-nav ml-auto">
                         <li class="navbar-item">
@@ -953,7 +1018,7 @@ async def read_root():
                 </div>
             </nav>    
     """
-    html_mid_str = create_html_ph_graph("pH Values", 7, 8, True)
+    html_mid_str = create_html_ph_graph(7, 8, 0, 1000, True)
     html_end_str = """
         </body></html>
     """
@@ -969,7 +1034,7 @@ async def read_phall():
             <meta charset="utf-8">
             <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fix=no">
             <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@4.0.0/dist/css/bootstrap.min.css" integrity="sha384-Gn5384xqQ1aoWXA+058RXPxPg6fy4IWvTNh0E263XmFcJlSAwiGgFAW/dAiS6JXm" crossorigin="anonymous">
-            <title>Chem Feeder pH</title>
+            <title>pH/ORP Monitor</title>
             <style>
             .nav-link:hover {
             color: white !important;
@@ -979,7 +1044,7 @@ async def read_phall():
         <body>
             <nav class="navbar navbar-light bg-primary">
                 <a class="nav-link"></a>
-                <h3 class="nav-brand" style="color:white">pH Chem Feeder</h3>
+                <h3 class="nav-brand" style="color:white">pH/ORP Monitor</h3>
                 <div>
                     <ul class="navbar-nav ml-auto">
                         <li class="navbar-item">
@@ -990,7 +1055,7 @@ async def read_phall():
             </nav>    
     """
 
-    html_mid_str = create_html_ph_graph("pH Values", 0, 9, False)
+    html_mid_str = create_html_ph_graph(0, 9, 0, 1000, False)
     html_end_str = """
         </body></html>
     """
@@ -1011,12 +1076,12 @@ def start_server_ph():
     server_thread.start()
 
 
-def create_html_ph_graph(title, v_min, v_max, ignore_zero):
-    df = get_log_data()
-    if ignore_zero:
-        df = df[df['pH'] > 0]
+def create_html_ph_graph(v_min, v_max, orp_min, orp_max, ignore_zero):
+    df = get_log_data_ph()
     df.rename(columns={'Date':'Date-UTC'}, inplace=True)
     df['Date'] = df['Date-UTC'].apply(datetime.fromtimestamp)
+    if ignore_zero:
+        df = df[df['pH'] > 0]
     # Create figure with secondary y-axis
     fig = make_subplots(specs=[[{"secondary_y": True}]])
     # Add traces
@@ -1026,6 +1091,8 @@ def create_html_ph_graph(title, v_min, v_max, ignore_zero):
                   secondary_y=True)
     fig.update_layout(
         height=500,
+        title_text="pH Values",
+        title_x=0.5,
         xaxis=dict(
             title_text="Date"
         ),
@@ -1065,19 +1132,65 @@ def create_html_ph_graph(title, v_min, v_max, ignore_zero):
             dict(dtickrange=[3600000, None], value="%b %d %H:%M")
         ]
     )
-    return pio.to_html(fig, full_html=False, include_plotlyjs='cdn', config={'displayModeBar': False})
+    html_part1 = pio.to_html(fig, full_html=False, include_plotlyjs='cdn', config={'displayModeBar': False})
+    
+    df = get_log_data_orp()
+    if len(orp_mqtt_topic) > 0 and len(df) > 0:
+        df.rename(columns={'Date':'Date-UTC'}, inplace=True)
+        df['Date'] = df['Date-UTC'].apply(datetime.fromtimestamp)
+        if ignore_zero:
+            df = df[df['orp'] > 0]
+        fig2 = make_subplots(specs=[[{"secondary_y": True}]])
+        fig2.add_trace(go.Scatter(x=df['Date'], y=df['orp'], mode='lines+markers', name="ORP"),
+                      secondary_y=False)
+        fig2.update_layout(
+            height=500,
+            title_text="ORP Values",
+            title_x=0.5,
+            xaxis=dict(
+                title_text="Date"
+            ),
+            yaxis=dict(
+                title_text="<b>ORP (mV)</b>",
+                range=[orp_min,orp_max]
+            ),
+            yaxis2=dict(
+                title_text="<b>Alarm</b>",
+                showgrid=False,
+                showticklabels=True,
+                #domain=[0, 1],
+                range=[0,4],
+                anchor="x",
+                overlaying="y",
+                side="right",
+                tickvals=[1],
+                ticktext=['True']
+            )
+        )
+        fig2.update_xaxes(
+            rangeslider_visible=True,
+            rangeselector=dict(
+                buttons=list([
+                    dict(count=1, label="1d", step="day", stepmode="backward"),
+                    dict(count=7, label="1w", step="day", stepmode="backward"),
+                    dict(count=14, label="2w", step="day", stepmode="backward"),
+                    dict(count=1, label="1m", step="month", stepmode="backward"),
+                    dict(count=3, label="3m", step="month", stepmode="backward"),
+                    dict(count=6, label="6m", step="month", stepmode="backward"),
+                    dict(step="all")
+                ])
+            ),
+            tickformatstops = [
+                dict(dtickrange=[None, 60000], value="%H:%M:%S"),
+                dict(dtickrange=[60000, 3600000], value="%H:%M"),
+                dict(dtickrange=[3600000, None], value="%b %d %H:%M")
+            ]
+        )
+        html_part2 = pio.to_html(fig2, full_html=False, include_plotlyjs='cdn', config={'displayModeBar': False})
+    else:
+        html_part2 = ""
 
-# Detect Alarm
-# try:
-#     image = Image.open(args.file)
-# except FileNotFoundError:
-#     print(f"Error: Image file not found at '{args.file}'")
-#     exit(-1)
-#
-# # Perform OCR using pytesseract
-# text = pytesseract.image_to_string(image)
-# if "ALARM" in text:
-#   print("ALARM")
+    return html_part1 + html_part2
 
 
 if __name__ == "__main__":
@@ -1165,6 +1278,10 @@ if __name__ == "__main__":
                     result_glist.append((rc, ph))
                     if len(result_glist) >= 2 and result_glist[-1][1] == result_glist[-2][1]:
                         found_good = True
+                        if len(save_filename) > 0 and ph > 0.0 and ph <= 2.0:
+                            directory, filename = os.path.split(save_filename)
+                            file, ext = os.path.splitext(filename)
+                            cv2.imwrite(f"{directory}{os.sep}{file}_{out_loop}_l3{ext}", image)
                         break
                 else:
                     result_blist.append((rc, ph))
@@ -1238,10 +1355,22 @@ if __name__ == "__main__":
                 time_elpase = datetime.now() - log_data_last_ph_time
                 if time_elpase.total_seconds() >= 15*60:
                     record_data = True
+            # elif orp_reading_ts is not None:
+            #    elapse = datetime.now() - orp_reading_ts
+            #    if elapse.total_seconds() <= 1:
+            #        record_data = True
 
             if record_data:
                 log_data_rotate()
-                log_data_save(ph, alarm_report)
+                log_data_save_ph(ph, alarm_report)
+
+                #
+                # Log ORP data if recent (<= 30 seconds old)
+                if orp_reading_ts is not None:
+                    elapse = datetime.now() - orp_reading_ts
+                    if elapse.total_seconds() <= 30:
+                        log_data_save_orp(orp_reading)
+
 
         time_check = time_start + timedelta(seconds=sample_interval)
         time_delay = time_check - datetime.now()
