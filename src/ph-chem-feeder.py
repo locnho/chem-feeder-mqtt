@@ -172,7 +172,7 @@ web_addr = "0.0.0.0"            # Web address to serving pH data (default all in
 web_port = 8025                 # Web port to serving pH data
 sample_interval = 30            # Sample interval in second
 crop_rect = [0, 0, 0, 0]        # Crop value of all sides
-orp_mqtt_topic = "aqualinkd/CHEM/ORP" # ORP MQTT topic
+orp_mqtt_topic = "aqualinkd/CHEM/ORP/set" # ORP MQTT topic
 
 orp_reading = 0.0
 orp_reading_ts = None
@@ -1018,7 +1018,7 @@ async def read_root():
                 </div>
             </nav>    
     """
-    html_mid_str = create_html_ph_graph(7, 8, 0, 1000, True)
+    html_mid_str = create_html_ph_graph(7, 8, 600, 800, True)
     html_end_str = """
         </body></html>
     """
@@ -1082,6 +1082,9 @@ def create_html_ph_graph(v_min, v_max, orp_min, orp_max, ignore_zero):
     df['Date'] = df['Date-UTC'].apply(datetime.fromtimestamp)
     if ignore_zero:
         df = df[df['pH'] > 0]
+    te = df['Date'].iloc[-1]
+    te += timedelta(hours=3)
+    ts = te - timedelta(weeks=1)
     # Create figure with secondary y-axis
     fig = make_subplots(specs=[[{"secondary_y": True}]])
     # Add traces
@@ -1094,7 +1097,8 @@ def create_html_ph_graph(v_min, v_max, orp_min, orp_max, ignore_zero):
         title_text="pH Values",
         title_x=0.5,
         xaxis=dict(
-            title_text="Date"
+            title_text="Date",
+            range=[ts.strftime("%Y-%m-%d %H:%M:%S"), te.strftime("%Y-%m-%d %H:%M:%S")]
         ),
         yaxis=dict(
             title_text="<b>pH</b>",
@@ -1140,6 +1144,9 @@ def create_html_ph_graph(v_min, v_max, orp_min, orp_max, ignore_zero):
         df['Date'] = df['Date-UTC'].apply(datetime.fromtimestamp)
         if ignore_zero:
             df = df[df['orp'] > 0]
+        te = df['Date'].iloc[-1]
+        te += timedelta(hours=3)
+        ts = te - timedelta(weeks=1)
         fig2 = make_subplots(specs=[[{"secondary_y": True}]])
         fig2.add_trace(go.Scatter(x=df['Date'], y=df['orp'], mode='lines+markers', name="ORP"),
                       secondary_y=False)
@@ -1148,7 +1155,8 @@ def create_html_ph_graph(v_min, v_max, orp_min, orp_max, ignore_zero):
             title_text="ORP Values",
             title_x=0.5,
             xaxis=dict(
-                title_text="Date"
+                title_text="Date",
+                range=[ts.strftime("%Y-%m-%d %H:%M:%S"), te.strftime("%Y-%m-%d %H:%M:%S")]
             ),
             yaxis=dict(
                 title_text="<b>ORP (mV)</b>",
@@ -1267,7 +1275,6 @@ if __name__ == "__main__":
 
             result_glist = []
             result_blist = []
-            bad_image = None
             found_good = False
             idx = 0
             for image in images:
@@ -1278,14 +1285,19 @@ if __name__ == "__main__":
                     result_glist.append((rc, ph))
                     if len(result_glist) >= 2 and result_glist[-1][1] == result_glist[-2][1]:
                         found_good = True
-                        if len(save_filename) > 0 and ph > 0.0 and ph <= 2.0:
+                        if len(save_filename) > 0 and ph > 0.0 and ph < 2.0:
                             directory, filename = os.path.split(save_filename)
                             file, ext = os.path.splitext(filename)
-                            cv2.imwrite(f"{directory}{os.sep}{file}_{out_loop}_l3{ext}", image)
+                            ts = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+                            cv2.imwrite(f"{directory}{os.sep}{file}_l2_{ts}{ext}", image)
                         break
                 else:
                     result_blist.append((rc, ph))
-                    bad_image = image
+                    if len(save_filename) > 0:
+                        directory, filename = os.path.split(save_filename)
+                        file, ext = os.path.splitext(filename)
+                        ts = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+                        cv2.imwrite(f"{directory}{os.sep}{file}_{ts}{ext}", image)
                 idx += 1
 
             if len(result_glist) >= 2:
@@ -1311,11 +1323,6 @@ if __name__ == "__main__":
             if rc == ERR_NOSCREEN_DETECTED:
                 print(f"Image{out_loop}: No screen detected", flush=True)
     
-            if len(save_filename) > 0 and bad_image is not None:
-                directory, filename = os.path.split(save_filename)
-                file, ext = os.path.splitext(filename)
-                cv2.imwrite(f"{directory}{os.sep}{file}_{out_loop}{ext}", bad_image)
-
             if rc == ERR_SUCCESS:
                 break
 
@@ -1364,12 +1371,17 @@ if __name__ == "__main__":
                 log_data_rotate()
                 log_data_save_ph(ph, alarm_report)
 
-                #
-                # Log ORP data if recent (<= 30 seconds old)
-                if orp_reading_ts is not None:
-                    elapse = datetime.now() - orp_reading_ts
-                    if elapse.total_seconds() <= 30:
-                        log_data_save_orp(orp_reading)
+            #
+            # Log ORP data if recent data, changed, or over 15 minutes ago
+            if orp_reading_ts is not None:
+              elapse1 = datetime.now() - orp_reading_ts
+              if elapse1.total_seconds() <= 120:
+                if not math.isclose(log_data_last_orp, orp_reading):
+                  log_data_save_orp(orp_reading)
+                elif orp_reading != 0.0: 
+                  elapse2 = datetime.now() - log_data_last_orp_time        
+                  if elapse2.total_seconds() >= 15*60:
+                    log_data_save_orp(orp_reading)
 
 
         time_check = time_start + timedelta(seconds=sample_interval)
