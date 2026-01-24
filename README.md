@@ -31,7 +31,7 @@ For Acid Tank sensor, preferred non-contact sensor such:
 * IP68 Waterproof Junction Box Housing (https://www.amazon.com/dp/B0CP88ZFWL?ref=ppx_yo2ov_dt_b_fed_asin_title&th=1)
 * JST XH 2.54 MM Connector Kit (https://www.amazon.com/dp/B0F5QBR5F4?ref=ppx_yo2ov_dt_b_fed_asin_title&th=1)
 
-This requires a level shifter as the voltage is 5V and RPI 5 requires 3.3V. Then create the adapter board with JST connector. See images below:
+This requires a level shifter as the sensor voltage is 5V and RPI 5 requires 3.3V. Then create the adapter board with JST connector. See images below:
 
 
 <img src="misc/acid-tank-sensor.jpg" width="512"/> | <img src="misc/level-shifter-box.jpg" width="256"/>
@@ -244,6 +244,26 @@ The configuration setting:
             "platform": "mqtt"
         }
 ```
+
+# AquaLinkD Web Page Integration for Acid Tank Level & Alarm
+
+To have Acid Tank Level and Alarm display in AquaLinkD, you need to use this branch:
+
+https://github.com/locnho/AqualinkD/commits/pda-ps6-dev-v3.0.3/
+
+The above branch has integrate support (see https://github.com/locnho/AqualinkD/commit/aca0521a1d90ae43e2060d8b1c864ef32ee7abb5).
+
+Here is the manual support to add to your existent AquaLinkD Web Page:
+
+1. Copy file "web/mqtt_sensors.js" and "web/mqtt.min.js" to "/var/www/aqualinkd"
+2. Add below line to "/var/www/aqualinkd/index.html" right above "<script type='text/javascript'>"
+
+   <script scr="mqtt.min.js" type="text/javascript"></script>
+3. Add below line to "/var/www/aqualinkd/config.json"
+
+   "external_script":"mqtt_sensors.js",
+
+Or you can just build this and do a "make install".
 
 # ORP Monitor Support
 
