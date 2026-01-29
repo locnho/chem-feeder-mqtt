@@ -173,9 +173,12 @@ web_port = 8025                 # Web port to serving pH data
 sample_interval = 30            # Sample interval in second
 crop_rect = [0, 0, 0, 0]        # Crop value of all sides
 orp_mqtt_topic = "aqualinkd/CHEM/ORP/set" # ORP MQTT topic
+swg_mqtt_topic = "aqualinkd/SWG/#"        # SWG MQTT topic
 
 orp_reading = 0.0
 orp_reading_ts = None
+swg_pct_reading = 0
+swg_pct_reading_ts = None
 
 def app_parser_arguments():
     global file_name
@@ -198,6 +201,7 @@ def app_parser_arguments():
     global verbose
     global crop_rect
     global orp_mqtt_topic
+    global swg_mqtt_topic
 
     parser = argparse.ArgumentParser(description='Chem Feeder MQTT')
     parser.add_argument('-f','--file', help='Input image file', default=file_name)
@@ -218,6 +222,7 @@ def app_parser_arguments():
     parser.add_argument('-vv', action="store_true", help="Verbose level 1, 2, and 4")
     parser.add_argument('--crop', type=int, nargs=4, help=F"Amount of pixel to crop on left, top, right, bottom\nDefault is 0, 0, 0, 0.\nCrop is before rotate.")
     parser.add_argument('--orp', type=str, help="ORP monitor MQTT topic. Set to \"\" to disable", default=orp_mqtt_topic)
+    parser.add_argument('--swg', type=str, help="SWG monitor MQTT topic. Set to \"\" to disable", default=swg_mqtt_topic)
 
     args = parser.parse_args()
     file_name = args.file
@@ -247,6 +252,8 @@ def app_parser_arguments():
         crop_rect = [args.crop[0], args.crop[1], args.crop[2], args.crop[3]]
     if args.orp is not None:
         orp_mqtt_topic = args.orp
+    if args.swg is not None:
+        swg_mqtt_topic = args.swg
 
 
 def sort_contours_top_to_bottom(contours):
@@ -618,8 +625,6 @@ mqtt_client = None
 # Callback function for when the client connects to the broker
 def on_connect(client, userdata, flags, rc, properties):
     global mqtt_connected
-    global orp_mqtt_topic_match
-    global orp_mqtt_topic_match2
     
     if rc == 0:
         if verbose & 0x04:
@@ -627,6 +632,8 @@ def on_connect(client, userdata, flags, rc, properties):
         mqtt_connected = 1
         if len(orp_mqtt_topic) > 0:
             mqtt_client.subscribe(orp_mqtt_topic)
+        if len(swg_mqtt_topic) > 0:
+            mqtt_client.subscribe(swg_mqtt_topic)
         mqtt_create_devices()
     else:
         print(f"Failed to connect, return code {rc}\n")
@@ -642,6 +649,13 @@ def on_publish(client, userdata, mid, reason_code, properties):
 def on_message(client, userdata, msg):
     global orp_reading
     global orp_reading_ts
+    global swg_pct_reading
+    global swg_pct_erading_ts
+
+    if swg_mqtt_topic.endswith("/#"):
+        swg_topic = swg_mqtt_topic[:len(swg_mqtt_topic)-2]
+    else:
+        swg_topic = swg_mqtt_topic
 
     topic = msg.topic.strip()
     if len(orp_mqtt_topic) > 0 and orp_mqtt_topic == topic:
@@ -650,6 +664,20 @@ def on_message(client, userdata, msg):
         if verbose & 0x02:
             print(datetime.now().strftime("%H:%M:%S: "), end="")
             print(f"MQTT ORP {orp_reading}")
+    elif len(swg_mqtt_topic) > 0 and swg_topic in topic:
+        if topic.endswith("Percent"):
+            swg_pct_reading = int(msg.payload.decode())
+            swg_pct_reading_ts = datetime.now()
+            if verbose & 0x02:
+                print(datetime.now().strftime("%H:%M:%S: "), end="")
+                print(f"MQTT SWG {swg_pct_reading}")
+        elif topic.endswith("Enabled"):
+            if int(msg.payload.decode()) == 0:
+                swg_pct_reading = 0
+                swg_pct_reading_ts = datetime.now()
+                if verbose & 0x02:
+                    print(datetime.now().strftime("%H:%M:%S: "), end="")
+                    print(f"MQTT SWG {swg_pct_reading}")
     elif verbose & 0x02:
         print(f"MQTT: {topic} message {msg.payload.decode()}")
 
@@ -887,7 +915,7 @@ def log_data_init():
         CREATE TABLE IF NOT EXISTS PH (Date INTEGER PRIMARY KEY, pH REAL, Alarm INTEGER)
     ''')
     cursor.execute('''
-        CREATE TABLE IF NOT EXISTS ORP (Date INTEGER PRIMARY KEY, orp REAL)
+        CREATE TABLE IF NOT EXISTS ORP2 (Date INTEGER PRIMARY KEY, orp REAL, swg INTEGER)
     ''')
     db_g.commit()
     if DBG_LEVEL & 8:
@@ -912,7 +940,7 @@ def log_data_save_ph(ph: float, alarm: int):
         print(f"Save pH data to {log_data_filename}")
 
 
-def log_data_save_orp(orp: float):
+def log_data_save_orp(orp: float, swg: int):
     global db_g
     global log_data_last_orp
     global log_data_last_orp_time
@@ -922,7 +950,7 @@ def log_data_save_orp(orp: float):
 
     cursor = db_g.cursor()
     tn = int(datetime.now().timestamp())
-    cursor.execute(f"INSERT INTO ORP (Date, orp) VALUES ({tn}, {orp})")
+    cursor.execute(f"INSERT INTO ORP2 (Date, orp, swg) VALUES ({tn}, {orp}, {swg})")
     db_g.commit()
     log_data_last_orp = orp
     log_data_last_orp_time = datetime.now()
@@ -951,12 +979,12 @@ def log_data_rotate():
     del_sql = f"DELETE FROM PH WHERE Date < ?"
     cursor.execute(del_sql, (date_object.timestamp(), ))
     
-    cursor.execute(f"SELECT Date FROM ORP ORDER BY Date")
+    cursor.execute(f"SELECT Date FROM ORP2 ORDER BY Date")
     row = cursor.fetchone()
     date_object = datetime.fromtimestamp(row[0])
     date_object -= relativedelta(years=1)
 
-    del_sql = f"DELETE FROM ORP WHERE Date < ?"
+    del_sql = f"DELETE FROM ORP2 WHERE Date < ?"
     cursor.execute(del_sql, (date_object.timestamp(), ))
 
     db_g.commit()
@@ -978,8 +1006,8 @@ def get_log_data_ph():
 def get_log_data_orp():
     db_l = sqlite3.connect(log_data_filename)
     cursor = db_l.cursor()
-    df = pd.read_sql_query(f"SELECT * FROM ORP ORDER BY Date", db_l)
-    df.columns = ['Date', 'orp']
+    df = pd.read_sql_query(f"SELECT * FROM ORP2 ORDER BY Date", db_l)
+    df.columns = ['Date', 'orp', 'swg']
     db_l.close()
     return df
 
@@ -1150,6 +1178,8 @@ def create_html_ph_graph(v_min, v_max, orp_min, orp_max, ignore_zero):
         fig2 = make_subplots(specs=[[{"secondary_y": True}]])
         fig2.add_trace(go.Scatter(x=df['Date'], y=df['orp'], mode='lines+markers', name="ORP"),
                       secondary_y=False)
+        fig2.add_trace(go.Scatter(x=df['Date'], y=df['swg'], mode='lines+markers', name="SWG"),
+                  secondary_y=True)
         fig2.update_layout(
             height=500,
             title_text="ORP Values",
@@ -1163,15 +1193,15 @@ def create_html_ph_graph(v_min, v_max, orp_min, orp_max, ignore_zero):
                 range=[orp_min,orp_max]
             ),
             yaxis2=dict(
-                title_text="<b>Alarm</b>",
+                title_text="<b>SWG</b>",
                 showgrid=False,
                 showticklabels=True,
                 #domain=[0, 1],
-                range=[0,4],
+                range=[0,100],
                 anchor="x",
                 overlaying="y",
                 side="right",
-                tickvals=[1],
+                #tickvals=[1],
                 ticktext=['True']
             )
         )
@@ -1377,11 +1407,11 @@ if __name__ == "__main__":
               elapse1 = datetime.now() - orp_reading_ts
               if elapse1.total_seconds() <= 120:
                 if not math.isclose(log_data_last_orp, orp_reading):
-                  log_data_save_orp(orp_reading)
+                  log_data_save_orp(orp_reading, swg_pct_reading)
                 elif orp_reading != 0.0: 
                   elapse2 = datetime.now() - log_data_last_orp_time        
                   if elapse2.total_seconds() >= 15*60:
-                    log_data_save_orp(orp_reading)
+                    log_data_save_orp(orp_reading, swg_pct_reading)
 
 
         time_check = time_start + timedelta(seconds=sample_interval)
