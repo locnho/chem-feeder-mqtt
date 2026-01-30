@@ -621,13 +621,15 @@ def get_file_image(file_name):
 
 HOMEBRIDGE_DEVICE_TOPIC="homebridge"
 mqtt_client = None
+mqtt_connected_ts = None
 
 # Callback function for when the client connects to the broker
 def on_connect(client, userdata, flags, rc, properties):
     global mqtt_connected
+    global mqtt_connected_ts
     
     if rc == 0:
-        if verbose & 0x04:
+        if verbose & 0x02:
             print("Connected to MQTT server")
         mqtt_connected = 1
         if len(orp_mqtt_topic) > 0:
@@ -635,6 +637,7 @@ def on_connect(client, userdata, flags, rc, properties):
         if len(swg_mqtt_topic) > 0:
             mqtt_client.subscribe(swg_mqtt_topic)
         mqtt_create_devices()
+        mqtt_connected_ts = datetime.now()
     else:
         print(f"Failed to connect, return code {rc}\n")
         mqtt_connected = 0
@@ -684,10 +687,11 @@ def on_message(client, userdata, msg):
 
 def mqtt_init():
     global mqtt_client
+    global mqtt_connected_ts
 
     # Create an MQTT client instance
     try:
-        if verbose & 0x04:
+        if verbose & 0x02:
             print(f"Connecting to MQTT Broker {mqtt_addr}:{mqtt_port}")
         mqtt_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id = "Chem Feeder")
         # Set user name/password
@@ -700,9 +704,33 @@ def mqtt_init():
         mqtt_client.connect(mqtt_addr, mqtt_port, 60)
         # Start the network loop in a non-blocking way
         mqtt_client.loop_start()
+        mqtt_connected_ts = datetime.now()
+        if verbose & 0x02:
+            print("Waiting for MQTT connect")
+        return ERR_SUCCESS
 
     except Exception as e:
         print("Can not connect to MQTT Broker")
+        mqtt_connected_ts = datetime.now()
+        return ERR_NOMQTT
+
+def mqtt_reconnect():
+    global mqtt_client
+    global mqtt_connected_ts
+
+    try:
+        # Connect to the MQTT Broker
+        mqtt_client.connect(mqtt_addr, mqtt_port, 60)
+        # Start the network loop in a non-blocking way
+        mqtt_client.loop_start()
+        mqtt_connected_ts = datetime.now()
+        if verbose & 0x02:
+            print("Waiting for MQTT connect")
+        return ERR_SUCCESS
+
+    except Exception as e:
+        print("Can not connect to MQTT Broker")
+        mqtt_connected_ts = datetime.now()
         return ERR_NOMQTT
 
 
@@ -712,7 +740,7 @@ def mqtt_close():
     # Disconnect from the broker
     mqtt_client.loop_stop()
     mqtt_client.disconnect()
-    if verbose & 0x04:
+    if verbose & 0x02:
         print("Disconnected from MQTT Broker")
     mqtt_connected = 0
 
@@ -1267,6 +1295,11 @@ if __name__ == "__main__":
         start_server_ph()
 
     while True:
+        if not mqtt_connected:
+            elapsed = datetime.now() - mqtt_connected_ts
+            if elapsed.total_seconds() >= 30:
+                mqtt_reconnect()
+
         time_start = datetime.now()
         #
         # Try 3 time before report to MQTT
