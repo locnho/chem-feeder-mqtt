@@ -174,6 +174,7 @@ sample_interval = 30            # Sample interval in second
 crop_rect = [0, 0, 0, 0]        # Crop value of all sides
 orp_mqtt_topic = "aqualinkd/CHEM/ORP/set" # ORP MQTT topic
 swg_mqtt_topic = "aqualinkd/SWG/#"        # SWG MQTT topic
+time_mqtt_topic = "datetime"    # Date time topic
 
 orp_reading = 0.0
 orp_reading_ts = None
@@ -202,6 +203,7 @@ def app_parser_arguments():
     global crop_rect
     global orp_mqtt_topic
     global swg_mqtt_topic
+    global time_mqtt_topic
 
     parser = argparse.ArgumentParser(description='Chem Feeder MQTT')
     parser.add_argument('-f','--file', help='Input image file', default=file_name)
@@ -223,6 +225,7 @@ def app_parser_arguments():
     parser.add_argument('--crop', type=int, nargs=4, help=F"Amount of pixel to crop on left, top, right, bottom\nDefault is 0, 0, 0, 0.\nCrop is before rotate.")
     parser.add_argument('--orp', type=str, help="ORP monitor MQTT topic. Set to \"\" to disable", default=orp_mqtt_topic)
     parser.add_argument('--swg', type=str, help="SWG monitor MQTT topic. Set to \"\" to disable", default=swg_mqtt_topic)
+    parser.add_argument('--time', type=str, help="Set MQTT time topic. Set to \"\" to disable", default=time_mqtt_topic)
 
     args = parser.parse_args()
     file_name = args.file
@@ -254,6 +257,8 @@ def app_parser_arguments():
         orp_mqtt_topic = args.orp
     if args.swg is not None:
         swg_mqtt_topic = args.swg
+    if args.time is not None:
+        tim_mqtt_topic = args.time
 
 
 def sort_contours_top_to_bottom(contours):
@@ -799,6 +804,14 @@ def mqtt_publish_acid_level(level1, level2):
         mqtt_publish(f"{HOMEBRIDGE_DEVICE_TOPIC}/to/set",
                       "{\"name\": \"Acid Tank Level\", \"service_name\": \"Acid Tank Level\", \"characteristic\": \"On\", \"value\": false}")
 
+from zoneinfo import ZoneInfo
+def mqtt_publish_time():
+    if len(time_mqtt_topic) > 0:
+        lt_now = datetime.now().astimezone()
+        offset = lt_now.utcoffset().total_seconds()
+        val = int(lt_now.timestamp() + offset)
+        mqtt_client.publish(time_mqtt_topic, val.to_bytes(4, 'big'))
+
 
 def gpio_init():
     GPIO.setmode(GPIO.BCM)
@@ -1299,6 +1312,8 @@ if __name__ == "__main__":
             elapsed = datetime.now() - mqtt_connected_ts
             if elapsed.total_seconds() >= 30:
                 mqtt_reconnect()
+        else:
+            mqtt_publish_time()
 
         time_start = datetime.now()
         #
