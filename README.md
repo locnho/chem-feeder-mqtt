@@ -249,11 +249,9 @@ The configuration setting:
 
 To have Acid Tank Level and Alarm display in AquaLinkD, you need to use this branch:
 
-https://github.com/locnho/AqualinkD/commits/pda-ps6-dev-v3.0.3/
+https://github.com/locnho/AqualinkD/tree/pda-ps6-dev-v3.0.3b
 
-The above branch has integrate support (see https://github.com/locnho/AqualinkD/commit/aca0521a1d90ae43e2060d8b1c864ef32ee7abb5).
-
-Here is the manual support to add to your existent AquaLinkD Web Page:
+Or you can manual add support to your existent AquaLinkD Web Page:
 
 1. Copy file "web/mqtt_sensors.js" and "web/mqtt.min.js" to "/var/www/aqualinkd"
 2. Add below line to "/var/www/aqualinkd/index.html" right above "<script type='text/javascript'>"
