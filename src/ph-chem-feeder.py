@@ -175,11 +175,14 @@ crop_rect = [0, 0, 0, 0]        # Crop value of all sides
 orp_mqtt_topic = "aqualinkd/CHEM/ORP/set" # ORP MQTT topic
 swg_mqtt_topic = "aqualinkd/SWG/#"        # SWG MQTT topic
 time_mqtt_topic = "datetime"    # Date time topic
+orp_alarm_mqtt_topic = "homebridge/to/set"
 
 orp_reading = 0.0
 orp_reading_ts = None
 swg_pct_reading = 0
 swg_pct_reading_ts = None
+orp_alarm = 0
+orp_alarm_ts = None
 
 def app_parser_arguments():
     global file_name
@@ -204,6 +207,7 @@ def app_parser_arguments():
     global orp_mqtt_topic
     global swg_mqtt_topic
     global time_mqtt_topic
+    global orp_alarm_mqtt_topic
 
     parser = argparse.ArgumentParser(description='Chem Feeder MQTT')
     parser.add_argument('-f','--file', help='Input image file', default=file_name)
@@ -226,6 +230,7 @@ def app_parser_arguments():
     parser.add_argument('--orp', type=str, help="ORP monitor MQTT topic. Set to \"\" to disable", default=orp_mqtt_topic)
     parser.add_argument('--swg', type=str, help="SWG monitor MQTT topic. Set to \"\" to disable", default=swg_mqtt_topic)
     parser.add_argument('--time', type=str, help="Set MQTT time topic. Set to \"\" to disable", default=time_mqtt_topic)
+    parser.add_argument('--orpalarm', type=str, help="Set MQTT ORP alarm topic. Set to \"\" to disable", default=orp_alarm_mqtt_topic)
 
     args = parser.parse_args()
     file_name = args.file
@@ -259,6 +264,8 @@ def app_parser_arguments():
         swg_mqtt_topic = args.swg
     if args.time is not None:
         tim_mqtt_topic = args.time
+    if args.orpalarm is not None:
+        orp_alarm_mqtt_topic = args.orpalarm
 
 
 def sort_contours_top_to_bottom(contours):
@@ -641,6 +648,8 @@ def on_connect(client, userdata, flags, rc, properties):
             mqtt_client.subscribe(orp_mqtt_topic)
         if len(swg_mqtt_topic) > 0:
             mqtt_client.subscribe(swg_mqtt_topic)
+        if len(orp_alarm_mqtt_topic) > 0:
+            mqtt_client.subscribe(orp_alarm_mqtt_topic)
         mqtt_create_devices()
         mqtt_connected_ts = datetime.now()
     else:
@@ -654,11 +663,15 @@ def on_publish(client, userdata, mid, reason_code, properties):
         print(f"MQTT: Message {mid} published", flush=True)
 
 
+import json
+
 def on_message(client, userdata, msg):
     global orp_reading
     global orp_reading_ts
     global swg_pct_reading
     global swg_pct_erading_ts
+    global orp_alarm
+    global orp_alarm_ts
 
     if swg_mqtt_topic.endswith("/#"):
         swg_topic = swg_mqtt_topic[:len(swg_mqtt_topic)-2]
@@ -686,6 +699,15 @@ def on_message(client, userdata, msg):
                 if verbose & 0x02:
                     print(datetime.now().strftime("%H:%M:%S: "), end="")
                     print(f"MQTT SWG {swg_pct_reading}")
+    elif len(orp_alarm_mqtt_topic) > 0 and orp_alarm_mqtt_topic in topic:
+        data = json.loads(msg.payload.decode())
+        if isinstance(data, dict) and 'Name' in data:
+            if data['Name'] == "ORP Alarm" and data['characteristic'] == "On":
+                if data['value']:
+                    orp_alarm = 1
+                else:
+                    orp_alarm = 0
+                orp_alarm_ts = datetime.now()
     elif verbose & 0x02:
         print(f"MQTT: {topic} message {msg.payload.decode()}")
 
@@ -956,7 +978,7 @@ def log_data_init():
         CREATE TABLE IF NOT EXISTS PH (Date INTEGER PRIMARY KEY, pH REAL, Alarm INTEGER)
     ''')
     cursor.execute('''
-        CREATE TABLE IF NOT EXISTS ORP2 (Date INTEGER PRIMARY KEY, orp REAL, swg INTEGER)
+        CREATE TABLE IF NOT EXISTS ORP3 (Date INTEGER PRIMARY KEY, orp REAL, swg INTEGER, alarm INTEGER)
     ''')
     db_g.commit()
     if DBG_LEVEL & 8:
@@ -981,7 +1003,7 @@ def log_data_save_ph(ph: float, alarm: int):
         print(f"Save pH data to {log_data_filename}")
 
 
-def log_data_save_orp(orp: float, swg: int):
+def log_data_save_orp(orp: float, swg: int, alarm: int):
     global db_g
     global log_data_last_orp
     global log_data_last_orp_time
@@ -991,7 +1013,7 @@ def log_data_save_orp(orp: float, swg: int):
 
     cursor = db_g.cursor()
     tn = int(datetime.now().timestamp())
-    cursor.execute(f"INSERT INTO ORP2 (Date, orp, swg) VALUES ({tn}, {orp}, {swg})")
+    cursor.execute(f"INSERT INTO ORP3 (Date, orp, swg, alarm) VALUES ({tn}, {orp}, {swg}, {alarm})")
     db_g.commit()
     log_data_last_orp = orp
     log_data_last_orp_time = datetime.now()
@@ -1020,12 +1042,12 @@ def log_data_rotate():
     del_sql = f"DELETE FROM PH WHERE Date < ?"
     cursor.execute(del_sql, (date_object.timestamp(), ))
     
-    cursor.execute(f"SELECT Date FROM ORP2 ORDER BY Date")
+    cursor.execute(f"SELECT Date FROM ORP3 ORDER BY Date")
     row = cursor.fetchone()
     date_object = datetime.fromtimestamp(row[0])
     date_object -= relativedelta(years=1)
 
-    del_sql = f"DELETE FROM ORP2 WHERE Date < ?"
+    del_sql = f"DELETE FROM ORP3 WHERE Date < ?"
     cursor.execute(del_sql, (date_object.timestamp(), ))
 
     db_g.commit()
@@ -1047,8 +1069,8 @@ def get_log_data_ph():
 def get_log_data_orp():
     db_l = sqlite3.connect(log_data_filename)
     cursor = db_l.cursor()
-    df = pd.read_sql_query(f"SELECT * FROM ORP2 ORDER BY Date", db_l)
-    df.columns = ['Date', 'orp', 'swg']
+    df = pd.read_sql_query(f"SELECT * FROM ORP3 ORDER BY Date", db_l)
+    df.columns = ['Date', 'orp', 'swg', 'alarm']
     db_l.close()
     return df
 
@@ -1151,9 +1173,13 @@ def create_html_ph_graph(v_min, v_max, orp_min, orp_max, ignore_zero):
     df['Date'] = df['Date-UTC'].apply(datetime.fromtimestamp)
     if ignore_zero:
         df = df[df['pH'] > 0]
-    te = df['Date'].iloc[-1]
-    te += timedelta(hours=3)
-    ts = te - timedelta(weeks=1)
+    if len(df.index) > 0:
+        te = df['Date'].iloc[-1]
+        te += timedelta(hours=3)
+        ts = te - timedelta(weeks=1)
+    else:
+        ts = datetime.now()
+        te = datetime.now()
     # Create figure with secondary y-axis
     fig = make_subplots(specs=[[{"secondary_y": True}]])
     # Add traces
@@ -1221,6 +1247,10 @@ def create_html_ph_graph(v_min, v_max, orp_min, orp_max, ignore_zero):
                       secondary_y=False)
         fig2.add_trace(go.Scatter(x=df['Date'], y=df['swg'], mode='lines+markers', name="SWG"),
                   secondary_y=True)
+        df.loc[df['alarm'] != 0, 'alarm'] += 20
+        df.loc[df['alarm'] == 0, 'alarm'] += 2
+        fig2.add_trace(go.Scatter(x=df['Date'], y=df['alarm'], mode='lines+markers', name="Alarm", yaxis="y3"),
+                  secondary_y=True)
         fig2.update_layout(
             height=500,
             title_text="ORP Values",
@@ -1242,9 +1272,22 @@ def create_html_ph_graph(v_min, v_max, orp_min, orp_max, ignore_zero):
                 anchor="x",
                 overlaying="y",
                 side="right",
-                #tickvals=[1],
-                ticktext=['True']
-            )
+                tickvals=[0, 20, 40, 60, 80, 100],
+                ticktext=['0/Alarm Off', '20/Alarm On', "40", "60", "80", "100"]
+            ),
+            yaxis3=dict(
+                title_text="<b>Alarm</b>",
+                #showgrid=False,
+                #showticklabels=True,
+                #domain=[0.2, 0.4],
+                #range=[0,1],
+                anchor="free",
+                overlaying="y",
+                side="right",
+                #tickvals=[0, 1],
+                #ticktext=['False', 'True'],
+            ),
+            margin=dict(r=150)
         )
         fig2.update_xaxes(
             rangeslider_visible=True,
@@ -1454,12 +1497,20 @@ if __name__ == "__main__":
             if orp_reading_ts is not None:
               elapse1 = datetime.now() - orp_reading_ts
               if elapse1.total_seconds() <= 120:
+                if orp_alarm_ts is not None:  
+                  elapse2 = datetime.now() - orp_alarm_ts
+                else:
+                  elapse2 = None
+                if elapse2 is not None and elapse2.total_seconds() <= 120:
+                    orp_alarm_val = orp_alarm
+                else:
+                    orp_alarm_val = 0
                 if not math.isclose(log_data_last_orp, orp_reading):
-                  log_data_save_orp(orp_reading, swg_pct_reading)
+                  log_data_save_orp(orp_reading, swg_pct_reading, orp_alarm_val)
                 elif orp_reading != 0.0: 
                   elapse2 = datetime.now() - log_data_last_orp_time        
                   if elapse2.total_seconds() >= 15*60:
-                    log_data_save_orp(orp_reading, swg_pct_reading)
+                    log_data_save_orp(orp_reading, swg_pct_reading, orp_alarm_val)
 
 
         time_check = time_start + timedelta(seconds=sample_interval)
