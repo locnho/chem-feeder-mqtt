@@ -701,8 +701,8 @@ def on_message(client, userdata, msg):
                     print(f"MQTT SWG {swg_pct_reading}")
     elif len(orp_alarm_mqtt_topic) > 0 and orp_alarm_mqtt_topic in topic:
         data = json.loads(msg.payload.decode())
-        if isinstance(data, dict) and 'Name' in data:
-            if data['Name'] == "ORP Alarm" and data['characteristic'] == "On":
+        if isinstance(data, dict) and 'name' in data:
+            if data['name'] == "ORP Alarm" and data['characteristic'] == "On":
                 if data['value']:
                     orp_alarm = 1
                 else:
