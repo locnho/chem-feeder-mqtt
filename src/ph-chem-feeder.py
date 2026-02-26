@@ -21,7 +21,6 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 import uvicorn
 import sqlite3
-import serial
 
 
 PICAM = 1                 # Set to 1 to support RPI Camera, otherise, use the -f argument
@@ -458,14 +457,14 @@ def extract_digits_once(image, threshold_val = 64, blurr_val = 5, morpho = False
                     print(f"Found: X {x} Y {y} W {w} H {h}")
                     image_w_bbox = cv2.rectangle(image_w_bbox,(x, y),(x+w, y+h),(128, 128, 128),2)
 
-        # print(len(digitCnts))
-        if len(digitCnts) == 3:
-            break
-
         if DBG_LEVEL & 2:
             cv2.imshow('Boxed', image_w_bbox) 
             cv2.waitKey(0)
             cv2.destroyAllWindows()
+
+        # print(len(digitCnts))
+        if len(digitCnts) == 3:
+            break
 
     # sort the contours from left-to-right
     if len(digitCnts) <= 0:
@@ -552,11 +551,11 @@ def extract_digits_once(image, threshold_val = 64, blurr_val = 5, morpho = False
 
 
 def extract_digits(image_gray):
-    rc, ph = extract_digits_once(image_gray, 64, 5, False)
+    rc, ph = extract_digits_once(image_gray, 64, 5, True)
     if rc != ERR_SUCCESS:
         rc, ph = extract_digits_once(image_gray, 64, 5, True, False)
     if rc != ERR_SUCCESS:
-        rc, ph = extract_digits_once(image_gray, 64, 5, True)
+        rc, ph = extract_digits_once(image_gray, 64, 5, False)
     if rc != ERR_SUCCESS:
         rc, ph = extract_digits_once(image_gray, 127, 7, False)   
     if rc != ERR_SUCCESS:
@@ -1247,8 +1246,8 @@ def create_html_ph_graph(v_min, v_max, orp_min, orp_max, ignore_zero):
                       secondary_y=False)
         fig2.add_trace(go.Scatter(x=df['Date'], y=df['swg'], mode='lines+markers', name="SWG"),
                   secondary_y=True)
-        df.loc[df['alarm'] != 0, 'alarm'] += 20
-        df.loc[df['alarm'] == 0, 'alarm'] += 2
+        df.loc[df['alarm'] == 1, 'alarm'] = 20
+        df.loc[df['alarm'] == 0, 'alarm'] = 2
         fig2.add_trace(go.Scatter(x=df['Date'], y=df['alarm'], mode='lines+markers', name="Alarm", yaxis="y3"),
                   secondary_y=True)
         fig2.update_layout(
@@ -1352,7 +1351,10 @@ if __name__ == "__main__":
 
     while True:
         if not mqtt_connected:
-            elapsed = datetime.now() - mqtt_connected_ts
+            if mqtt_connected_ts is not None:
+                elapsed = datetime.now() - mqtt_connected_ts
+            else:
+                elapsed = timedelta(seconds=60)
             if elapsed.total_seconds() >= 30:
                 mqtt_reconnect()
         else:
@@ -1402,6 +1404,12 @@ if __name__ == "__main__":
                 rc, ph = extract_digits(image)
                 if DBG_LEVEL & 32:
                     print(f"Image[{idx}]: {rc} {ph}")
+                if ph <= 7.4:
+                    if len(save_filename) > 0 and ph > 0.0 and ph < 2.0:
+                        directory, filename = os.path.split(save_filename)
+                        file, ext = os.path.splitext(filename)
+                        ts = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+                        cv2.imwrite(f"{directory}{os.sep}{file}_74_{ts}{ext}", image)
                 if rc == ERR_SUCCESS:
                     result_glist.append((rc, ph))
                     if len(result_glist) >= 2 and result_glist[-1][1] == result_glist[-2][1]:
