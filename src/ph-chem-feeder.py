@@ -151,6 +151,7 @@ ERR_NODIGITS = -2
 ERR_NODIGIT = -3
 ERR_NORECT = -4
 ERR_NOSCREEN_DETECTED = -5
+ERR_MULTIPLE_VALUES = -6
 
 ERR_NOMQTT = -100
 
@@ -551,6 +552,76 @@ def extract_digits_once(image, threshold_val = 64, blurr_val = 5, morpho = False
 
 
 def extract_digits(image_gray):
+    rc, ph = extract_digits_once(image_gray, 64, 5, True)
+    # print(ph1)
+    rc1, ph1 = extract_digits_once(image_gray, 64, 5, True, False)
+    # print(ph1)
+    if rc1 == ERR_SUCCESS:
+        if ph == 0.0:
+            ph = ph1
+            rc = rc1
+        elif ph == ph1:
+            return rc1, ph1
+        else:
+            return ERR_MULTIPLE_VALUES, 0.0
+    rc1, ph1 = extract_digits_once(image_gray, 64, 5, False)
+    # print(ph1)
+    if rc1 == ERR_SUCCESS:
+        if ph == 0.0:
+            ph = ph1
+            rc = rc1
+        elif ph == ph1:
+            return rc1, ph1
+        else:
+            return ERR_MULTIPLE_VALUES, 0.0
+    rc1, ph1 = extract_digits_once(image_gray, 127, 7, False)   
+    # print(ph1)
+    if rc1 == ERR_SUCCESS:
+        if ph == 0.0:
+            ph = ph1
+            rc = rc1
+        elif ph == ph1:
+            return rc1, ph1
+        else:
+            return ERR_MULTIPLE_VALUES, 0.0
+
+    expos_list = [
+        (6.195, -0.5),
+        (2.5, 0),
+        (2.75, -0.36),
+        (3, -0.5),
+        (1.36, -0.5),
+        (1.25, -1.0),
+    ]
+    for expos in expos_list:
+        image_exposure = cv2.convertScaleAbs(image_gray, alpha=expos[0], beta=expos[1])
+        rc1, ph1 = extract_digits_once(image_exposure)
+        # print(ph1)
+        if rc1 == ERR_SUCCESS:
+            if ph == 0.0:
+                ph = ph1
+                rc = rc1
+            elif ph == ph1:
+                return rc1, ph1
+            else:
+                return ERR_MULTIPLE_VALUES, 0.0
+
+    for expos in expos_list:
+        image_exposure = cv2.convertScaleAbs(image_gray, alpha=expos[0], beta=expos[1])
+        rc1, ph1 = extract_digits_once(image_exposure, 64, 5, True)
+        # print(ph1)
+        if rc1 == ERR_SUCCESS:
+            if ph == 0.0:
+                ph = ph1
+            elif ph == ph1:
+                return rc1, ph1
+            else:
+                return ERR_MULTIPLE_VALUES, 0.0
+    
+    return rc, ph
+
+
+def extract_digits_v1(image_gray):
     rc, ph = extract_digits_once(image_gray, 64, 5, True)
     if rc != ERR_SUCCESS:
         rc, ph = extract_digits_once(image_gray, 64, 5, True, False)
@@ -1037,7 +1108,7 @@ def log_data_rotate():
     cursor.execute(f"SELECT Date FROM PH ORDER BY Date")
     row = cursor.fetchone()
     date_object = datetime.fromtimestamp(row[0])
-    date_object -= relativedelta(years=1)
+    date_object -= relativedelta(years=2)
     del_sql = f"DELETE FROM PH WHERE Date < ?"
     cursor.execute(del_sql, (date_object.timestamp(), ))
     
@@ -1451,6 +1522,8 @@ if __name__ == "__main__":
                 print(f"Image{out_loop}: No digit on LCD", flush=True)
             if rc == ERR_NOSCREEN_DETECTED:
                 print(f"Image{out_loop}: No screen detected", flush=True)
+            if rc == ERR_MULTIPLE_VALUES:
+                print(f"Image{out_loop}: Multiple values detected", flush=True)
     
             if rc == ERR_SUCCESS:
                 break
