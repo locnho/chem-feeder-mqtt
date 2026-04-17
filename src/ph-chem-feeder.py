@@ -1309,7 +1309,6 @@ def create_html_ph_graph(v_min, v_max, orp_min, orp_max, ignore_zero):
     if len(orp_mqtt_topic) > 0 and len(df1) > 0:
         if len(df1) > 500:
             row_list = []
-            last_index = 0
             last_tstamp = 0
             total_row = len(df1)
             for index, row in df1.iterrows():
@@ -1317,13 +1316,11 @@ def create_html_ph_graph(v_min, v_max, orp_min, orp_max, ignore_zero):
                     continue
                 if index == 0:
                     row_list.append(index)
-                    last_index = index
                     last_tstamp = row['Date']
                     continue
-                if row['Date'] < (last_tstamp + 60*10):
+                if row['Date'] < (last_tstamp + 60):
                     continue
                 row_list.append(index)
-                last_index = index
                 last_tstamp = row['Date']
 
             df = df1.iloc[row_list].copy()
