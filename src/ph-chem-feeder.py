@@ -750,7 +750,7 @@ def on_message(client, userdata, msg):
 
     topic = msg.topic.strip()
     if len(orp_mqtt_topic) > 0 and orp_mqtt_topic == topic:
-        orp_reading = float(msg.payload.decode())
+        orp_reading = int(float(msg.payload.decode()))
         orp_reading_ts = datetime.now()
         if verbose & 0x02:
             print(datetime.now().strftime("%H:%M:%S: "), end="")
@@ -1048,7 +1048,7 @@ def log_data_init():
         CREATE TABLE IF NOT EXISTS PH (Date INTEGER PRIMARY KEY, pH REAL, Alarm INTEGER)
     ''')
     cursor.execute('''
-        CREATE TABLE IF NOT EXISTS ORP3 (Date INTEGER PRIMARY KEY, orp REAL, swg INTEGER, alarm INTEGER)
+        CREATE TABLE IF NOT EXISTS ORP4 (Date INTEGER PRIMARY KEY, orp REAL, swg INTEGER, alarm INTEGER, ph INTEGER DEFAULT 0)
     ''')
     db_g.commit()
     if DBG_LEVEL & 8:
@@ -1073,7 +1073,7 @@ def log_data_save_ph(ph: float, alarm: int):
         print(f"Save pH data to {log_data_filename}")
 
 
-def log_data_save_orp(orp: float, swg: int, alarm: int):
+def log_data_save_orp(orp: float, swg: int, alarm: int, ph: float):
     global db_g
     global log_data_last_orp
     global log_data_last_orp_time
@@ -1083,7 +1083,7 @@ def log_data_save_orp(orp: float, swg: int, alarm: int):
 
     cursor = db_g.cursor()
     tn = int(datetime.now().timestamp())
-    cursor.execute(f"INSERT INTO ORP3 (Date, orp, swg, alarm) VALUES ({tn}, {orp}, {swg}, {alarm})")
+    cursor.execute(f"INSERT INTO ORP4 (Date, orp, swg, alarm, ph) VALUES ({tn}, {orp}, {swg}, {alarm}, {ph})")
     db_g.commit()
     log_data_last_orp = orp
     log_data_last_orp_time = datetime.now()
@@ -1112,12 +1112,12 @@ def log_data_rotate():
     del_sql = f"DELETE FROM PH WHERE Date < ?"
     cursor.execute(del_sql, (date_object.timestamp(), ))
     
-    cursor.execute(f"SELECT Date FROM ORP3 ORDER BY Date")
+    cursor.execute(f"SELECT Date FROM ORP4 ORDER BY Date")
     row = cursor.fetchone()
     date_object = datetime.fromtimestamp(row[0])
     date_object -= relativedelta(years=1)
 
-    del_sql = f"DELETE FROM ORP3 WHERE Date < ?"
+    del_sql = f"DELETE FROM ORP4 WHERE Date < ?"
     cursor.execute(del_sql, (date_object.timestamp(), ))
 
     db_g.commit()
@@ -1139,8 +1139,8 @@ def get_log_data_ph():
 def get_log_data_orp():
     db_l = sqlite3.connect(log_data_filename)
     cursor = db_l.cursor()
-    df = pd.read_sql_query(f"SELECT * FROM ORP3 ORDER BY Date", db_l)
-    df.columns = ['Date', 'orp', 'swg', 'alarm']
+    df = pd.read_sql_query(f"SELECT * FROM ORP4 ORDER BY Date", db_l)
+    df.columns = ['Date', 'orp', 'swg', 'alarm', 'ph']
     db_l.close()
     return df
 
@@ -1303,24 +1303,46 @@ def create_html_ph_graph(v_min, v_max, orp_min, orp_max, ignore_zero):
     )
     html_part1 = pio.to_html(fig, full_html=False, include_plotlyjs='cdn', config={'displayModeBar': False})
     
-    df = get_log_data_orp()
-    if len(orp_mqtt_topic) > 0 and len(df) > 0:
+    df1 = get_log_data_orp()
+    if ignore_zero:
+        df1 = df1[df1['orp'] > 0]
+    if len(orp_mqtt_topic) > 0 and len(df1) > 0:
+        if len(df1) > 500:
+            row_list = []
+            last_index = 0
+            last_tstamp = 0
+            total_row = len(df1)
+            for index, row in df1.iterrows():
+                if index >= total_row:
+                    continue
+                if index == 0:
+                    row_list.append(index)
+                    last_index = index
+                    last_tstamp = row['Date']
+                    continue
+                if row['Date'] < (last_tstamp + 60*10):
+                    continue
+                row_list.append(index)
+                last_index = index
+                last_tstamp = row['Date']
+
+            df = df1.iloc[row_list].copy()
+        else:
+            df = df1
+    
         df.rename(columns={'Date':'Date-UTC'}, inplace=True)
         df['Date'] = df['Date-UTC'].apply(datetime.fromtimestamp)
-        if ignore_zero:
-            df = df[df['orp'] > 0]
+
         te = df['Date'].iloc[-1]
         te += timedelta(hours=3)
         ts = te - timedelta(weeks=1)
         fig2 = make_subplots(specs=[[{"secondary_y": True}]])
-        fig2.add_trace(go.Scatter(x=df['Date'], y=df['orp'], mode='lines+markers', name="ORP"),
-                      secondary_y=False)
-        fig2.add_trace(go.Scatter(x=df['Date'], y=df['swg'], mode='lines+markers', name="SWG"),
-                  secondary_y=True)
+        x_data = df['Date']
+        fig2.add_trace(go.Scatter(x=x_data, y=df['orp'], mode='lines+markers', name="ORP"), secondary_y=False)
+        fig2.add_trace(go.Scatter(x=x_data, y=df['swg'], mode='lines+markers', name="SWG"), secondary_y=True)
         df.loc[df['alarm'] == 1, 'alarm'] = 20
         df.loc[df['alarm'] == 0, 'alarm'] = 2
-        fig2.add_trace(go.Scatter(x=df['Date'], y=df['alarm'], mode='lines+markers', name="Alarm", yaxis="y3"),
-                  secondary_y=True)
+        #fig2.add_trace(go.Scatter(x=df['Date'], y=df['alarm'], mode='lines+markers', name="Alarm", yaxis="y3"), secondary_y=True)
         fig2.update_layout(
             height=500,
             title_text="ORP Values",
@@ -1360,6 +1382,7 @@ def create_html_ph_graph(v_min, v_max, orp_min, orp_max, ignore_zero):
             margin=dict(r=150)
         )
         fig2.update_xaxes(
+            type='date',
             rangeslider_visible=True,
             rangeselector=dict(
                 buttons=list([
@@ -1587,11 +1610,11 @@ if __name__ == "__main__":
                 else:
                     orp_alarm_val = 0
                 if not math.isclose(log_data_last_orp, orp_reading):
-                  log_data_save_orp(orp_reading, swg_pct_reading, orp_alarm_val)
+                  log_data_save_orp(orp_reading, swg_pct_reading, orp_alarm_val, ph)
                 elif orp_reading != 0.0: 
                   elapse2 = datetime.now() - log_data_last_orp_time        
                   if elapse2.total_seconds() >= 15*60:
-                    log_data_save_orp(orp_reading, swg_pct_reading, orp_alarm_val)
+                    log_data_save_orp(orp_reading, swg_pct_reading, orp_alarm_val, ph)
 
 
         time_check = time_start + timedelta(seconds=sample_interval)
