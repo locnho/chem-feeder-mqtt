@@ -183,6 +183,8 @@ swg_pct_reading = 0
 swg_pct_reading_ts = None
 orp_alarm = 0
 orp_alarm_ts = None
+orp_aswg_active = 0
+orp_aswg_active_ts = None
 
 def app_parser_arguments():
     global file_name
@@ -742,6 +744,8 @@ def on_message(client, userdata, msg):
     global swg_pct_erading_ts
     global orp_alarm
     global orp_alarm_ts
+    global orp_aswg_active
+    global orp_aswg_active_ts
 
     if swg_mqtt_topic.endswith("/#"):
         swg_topic = swg_mqtt_topic[:len(swg_mqtt_topic)-2]
@@ -778,6 +782,12 @@ def on_message(client, userdata, msg):
                 else:
                     orp_alarm = 0
                 orp_alarm_ts = datetime.now()
+            elif data['name'] == "ASWG Active" and data['characteristic'] == "On":
+                if data['value']:
+                    orp_aswg_active = 1
+                else:
+                    orp_aswg_active = 0
+                orp_aswg_active_ts = datetime.now()
     elif verbose & 0x02:
         print(f"MQTT: {topic} message {msg.payload.decode()}")
 
@@ -895,6 +905,19 @@ def mqtt_publish_acid_level(level1, level2):
     else:
         mqtt_publish(f"{HOMEBRIDGE_DEVICE_TOPIC}/to/set",
                       "{\"name\": \"Acid Tank Level\", \"service_name\": \"Acid Tank Level\", \"characteristic\": \"On\", \"value\": false}")
+
+def mqtt_publish_swg(value):
+    if swg_pct_reading == value:
+        return
+    if len(swg_mqtt_topic) <= 0:
+        return
+    topic = swg_mqtt_topic
+    if swg_mqtt_topic.endswith("/#"):
+        topic = topic[:-2]
+    topic = topic + "/set"
+    message = str(value)
+    mqtt_publish(topic, message)
+
 
 from zoneinfo import ZoneInfo
 def mqtt_publish_time():
@@ -1405,6 +1428,41 @@ def create_html_ph_graph(v_min, v_max, orp_min, orp_max, ignore_zero):
     return html_part1 + html_part2
 
 
+def mqtt_orp_alive_check():
+    #
+    # Check if MQTT enabled and connected
+    if not mqtt_pub:
+        return
+    if not mqtt_connected:
+        return
+
+    #
+    # Check if SWG enabled
+    if swg_pct_reading <= 0:
+        return
+
+    #
+    # Check of Auto SWG was active
+    if not orp_aswg_active:
+        return
+    #
+    # SWG generation and Auto SWG were active. Check if there is failure in MQTT and Auto SWG ORP Control
+    if orp_aswg_active_ts is None:
+        return
+    elapse = datetime.now() - orp_aswg_active_ts
+    if elapse.total_seconds() < 10*60:
+        return
+    
+    # 
+    # No update for 10 minutes. Auo SWG ORP Control is offline or MQTT failed.
+    # In either case, turn off SWG
+    mqtt_publish_swg(0)
+
+    orp_aswg_active = 0
+    orp_aswg_active_ts = None
+    return
+
+
 if __name__ == "__main__":
     app_parser_arguments()
     print("Chem Feeder MQTT")
@@ -1449,7 +1507,9 @@ if __name__ == "__main__":
             if elapsed.total_seconds() >= 30:
                 mqtt_reconnect()
         else:
-            mqtt_publish_time()
+            # mqtt_publish_time()
+            mqtt_orp_alive_check()
+
 
         time_start = datetime.now()
         #
