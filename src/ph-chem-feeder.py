@@ -1138,7 +1138,7 @@ def log_data_rotate():
     cursor.execute(f"SELECT Date FROM ORP4 ORDER BY Date")
     row = cursor.fetchone()
     date_object = datetime.fromtimestamp(row[0])
-    date_object -= relativedelta(years=1)
+    date_object -= relativedelta(years=2)
 
     del_sql = f"DELETE FROM ORP4 WHERE Date < ?"
     cursor.execute(del_sql, (date_object.timestamp(), ))
@@ -1341,7 +1341,7 @@ def create_html_ph_graph(v_min, v_max, orp_min, orp_max, ignore_zero):
                     row_list.append(index)
                     last_tstamp = row['Date']
                     continue
-                if row['Date'] < (last_tstamp + 60):
+                if row['Date'] < (last_tstamp + (10*60)):
                     continue
                 row_list.append(index)
                 last_tstamp = row['Date']
@@ -1429,6 +1429,9 @@ def create_html_ph_graph(v_min, v_max, orp_min, orp_max, ignore_zero):
 
 
 def mqtt_orp_alive_check():
+    global orp_aswg_active
+    global orp_aswg_active_ts
+
     #
     # Check if MQTT enabled and connected
     if not mqtt_pub:
