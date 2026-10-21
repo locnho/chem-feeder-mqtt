@@ -176,11 +176,14 @@ orp_mqtt_topic = "aqualinkd/CHEM/ORP/set" # ORP MQTT topic
 swg_mqtt_topic = "aqualinkd/SWG/#"        # SWG MQTT topic
 time_mqtt_topic = "datetime"    # Date time topic
 orp_alarm_mqtt_topic = "homebridge/to/set"
+orp_serial_port = ""            # ORP serial port name
 
 orp_reading = 0.0
 orp_reading_ts = None
 swg_pct_reading = 0
 swg_pct_reading_ts = None
+swg_pct_set = 0
+swg_pct_set_ts = None
 orp_alarm = 0
 orp_alarm_ts = None
 orp_aswg_active = 0
@@ -210,6 +213,7 @@ def app_parser_arguments():
     global swg_mqtt_topic
     global time_mqtt_topic
     global orp_alarm_mqtt_topic
+    global orp_serial_port
 
     parser = argparse.ArgumentParser(description='Chem Feeder MQTT')
     parser.add_argument('-f','--file', help='Input image file', default=file_name)
@@ -233,6 +237,7 @@ def app_parser_arguments():
     parser.add_argument('--swg', type=str, help="SWG monitor MQTT topic. Set to \"\" to disable", default=swg_mqtt_topic)
     parser.add_argument('--time', type=str, help="Set MQTT time topic. Set to \"\" to disable", default=time_mqtt_topic)
     parser.add_argument('--orpalarm', type=str, help="Set MQTT ORP alarm topic. Set to \"\" to disable", default=orp_alarm_mqtt_topic)
+    parser.add_argument('--orpport', type=str, help="Set ORP serial port name. Set to \"\" to disable", default=orp_serial_port)
 
     args = parser.parse_args()
     file_name = args.file
@@ -268,6 +273,8 @@ def app_parser_arguments():
         tim_mqtt_topic = args.time
     if args.orpalarm is not None:
         orp_alarm_mqtt_topic = args.orpalarm
+    if args.orpport is not None:
+        orp_serial_port = args.orpport
 
 
 def sort_contours_top_to_bottom(contours):
@@ -679,14 +686,14 @@ def get_camera_image():
         time.sleep(2)
         first_image = 0
     images = []
-    for i in range(20):
+    for i in range(10):
         image = picam2.capture_array("main")
         image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         images.append(image)
         if i % 2 == 0:
-            time.sleep(0.05)
+            time.sleep(0.10)
         else:
-            time.sleep(0.05)
+            time.sleep(0.10)
     picam2.stop()
 
     return images
@@ -741,7 +748,7 @@ def on_message(client, userdata, msg):
     global orp_reading
     global orp_reading_ts
     global swg_pct_reading
-    global swg_pct_erading_ts
+    global swg_pct_reading_ts
     global orp_alarm
     global orp_alarm_ts
     global orp_aswg_active
@@ -1169,7 +1176,6 @@ def get_log_data_orp():
 
 
 app = FastAPI()
-httpd = None
 server_thread = None
 server_stop_event = None
 
@@ -1465,6 +1471,48 @@ def mqtt_orp_alive_check():
     orp_aswg_active_ts = None
     return
 
+import serial
+orp_serial: serial.Serial
+orp_serial_thread = None
+orp_serial_stop_event = None
+
+def orp_read_data(stop_event, serial_port):
+    global orp_reading
+    global orp_reading_ts
+
+    """Continuously listens for incoming data from the serial port."""
+    while not stop_event.is_set():
+        # Read until a newline character is found
+        line = serial_port.readline()
+        if (len(line) > 0):
+            line = line.decode().strip()
+            result = [item.strip() for item in line.split(",")]
+            if len(result) >= 4 and result[0] == "ORP":
+                #
+                # ORP,<ORP reading mV>,<SWG Percent To Set>,<Average ORP reading mV>
+                value  = int(result[1])
+                if value > 0:
+                    orp_reading = value
+                    orp_reading_ts = datetime.now()
+                value = int(result[2])
+                if value >= 0:
+                    swg_pct_set = result[2]
+                    swg_pct_set_ts = datetime.now()
+                print(f"ORP Serial: {line}")
+
+
+def orp_serial_setup():
+    global orp_serial
+    global orp_serial_thread
+    global orp_serial_stop_event
+
+    print(f"ORP Serial Port: {orp_serial_port}")
+    orp_serial = serial.Serial(port=orp_serial_port, baudrate=115200, timeout=1)
+    orp_serial_stop_event = threading.Event()
+    orp_serial_thread = threading.Thread(target=orp_read_data, args=(orp_serial_stop_event, orp_serial))
+    orp_serial_thread.daemon = True
+    orp_serial_thread.start()
+
 
 if __name__ == "__main__":
     app_parser_arguments()
@@ -1500,6 +1548,9 @@ if __name__ == "__main__":
 
     if len(log_data_filename) > 0:
         start_server_ph()
+
+    if len(orp_serial_port) > 0:
+        orp_serial_setup()
 
     while True:
         if not mqtt_connected:
@@ -1634,6 +1685,15 @@ if __name__ == "__main__":
             mqtt_publish_ph_alarm(alarm_report)
             mqtt_publish_acid_level(acid_level1, acid_level2)
 
+        if len(orp_serial_port) > 0 and mqtt_pub and orp_reading_ts is not None:
+            elapse = datetime.now() - orp_reading_ts
+            if elapse.total_seconds() <= 3:
+                mqtt_publish("aqualinkd/CHEM/ORP/set", f"{int(orp_reading)}")
+        if len(orp_serial_port) > 0 and mqtt_pub and swg_pct_set_ts is not None:
+            elapse = datetime.now() - swg_pct_set_ts
+            if elapse.total_seconds() <= 3:
+                mqtt_publish("aqualinkd/SWG/Percent/set", f"{int(swg_pct_set)}")
+
         if len(log_data_filename) > 0:
             #
             # Log data
@@ -1675,7 +1735,6 @@ if __name__ == "__main__":
                   elapse2 = datetime.now() - log_data_last_orp_time        
                   if elapse2.total_seconds() >= 15*60:
                     log_data_save_orp(orp_reading, swg_pct_reading, orp_alarm_val, ph)
-
 
         time_check = time_start + timedelta(seconds=sample_interval)
         time_delay = time_check - datetime.now()
