@@ -180,10 +180,11 @@ orp_serial_port = ""            # ORP serial port name
 
 orp_reading = 0.0
 orp_reading_ts = None
+orp_serial_reading_ts = None
 swg_pct_reading = 0
 swg_pct_reading_ts = None
-swg_pct_set = 0
-swg_pct_set_ts = None
+swg_serial_pct_set = 0
+swg_serial_pct_set_ts = None
 orp_alarm = 0
 orp_alarm_ts = None
 orp_aswg_active = 0
@@ -1476,9 +1477,12 @@ orp_serial: serial.Serial
 orp_serial_thread = None
 orp_serial_stop_event = None
 
-def orp_read_data(stop_event, serial_port):
+def orp_serial_read_data(stop_event, serial_port):
     global orp_reading
     global orp_reading_ts
+    global orp_serial_reading_ts
+    global swg_serial_pct_set
+    global swg_serial_pct_set_ts
 
     """Continuously listens for incoming data from the serial port."""
     while not stop_event.is_set():
@@ -1488,17 +1492,27 @@ def orp_read_data(stop_event, serial_port):
             line = line.decode().strip()
             result = [item.strip() for item in line.split(",")]
             if len(result) >= 4 and result[0] == "ORP":
+                if orp_reading_ts is None:
+                    elapse = None
+                else:
+                    elapse = datetime.now() - orp_reading_ts
                 #
-                # ORP,<ORP reading mV>,<SWG Percent To Set>,<Average ORP reading mV>
-                value  = int(result[1])
-                if value > 0:
-                    orp_reading = value
-                    orp_reading_ts = datetime.now()
-                value = int(result[2])
-                if value >= 0:
-                    swg_pct_set = result[2]
-                    swg_pct_set_ts = datetime.now()
-                print(f"ORP Serial: {line}")
+                # Check if ORP reading was sent via MQTT.
+                # If not, it may be due to MQTT or network down.
+                # If so, use the serial port ORP reading
+                if elapse is None or elapse.total_seconds() >= 60:
+                    #
+                    # ORP,<ORP reading mV>,<SWG Percent To Set>,<Average ORP reading mV>
+                    value  = int(result[1])
+                    if value > 0:
+                        orp_reading = value
+                        orp_reading_ts = datetime.now()
+                        orp_serial_reading_ts = datetime.now()
+                    value = int(result[2])
+                    if value >= 0:
+                        swg_serial_pct_set = result[2]
+                        swg_serial_pct_set_ts = datetime.now()
+                    print(f"ORP Serial: {line}")
 
 
 def orp_serial_setup():
@@ -1509,7 +1523,7 @@ def orp_serial_setup():
     print(f"ORP Serial Port: {orp_serial_port}")
     orp_serial = serial.Serial(port=orp_serial_port, baudrate=115200, timeout=1)
     orp_serial_stop_event = threading.Event()
-    orp_serial_thread = threading.Thread(target=orp_read_data, args=(orp_serial_stop_event, orp_serial))
+    orp_serial_thread = threading.Thread(target=orp_serial_read_data, args=(orp_serial_stop_event, orp_serial))
     orp_serial_thread.daemon = True
     orp_serial_thread.start()
 
@@ -1685,14 +1699,14 @@ if __name__ == "__main__":
             mqtt_publish_ph_alarm(alarm_report)
             mqtt_publish_acid_level(acid_level1, acid_level2)
 
-        if len(orp_serial_port) > 0 and mqtt_pub and orp_reading_ts is not None:
-            elapse = datetime.now() - orp_reading_ts
+        if len(orp_serial_port) > 0 and mqtt_pub and orp_serial_reading_ts is not None:
+            elapse = datetime.now() - orp_serial_reading_ts
             if elapse.total_seconds() <= 3:
                 mqtt_publish("aqualinkd/CHEM/ORP/set", f"{int(orp_reading)}")
-        if len(orp_serial_port) > 0 and mqtt_pub and swg_pct_set_ts is not None:
-            elapse = datetime.now() - swg_pct_set_ts
+        if len(orp_serial_port) > 0 and mqtt_pub and swg_serial_pct_set_ts is not None:
+            elapse = datetime.now() - swg_serial_pct_set_ts
             if elapse.total_seconds() <= 3:
-                mqtt_publish("aqualinkd/SWG/Percent/set", f"{int(swg_pct_set)}")
+                mqtt_publish("aqualinkd/SWG/Percent/set", f"{int(swg_serial_pct_set)}")
 
         if len(log_data_filename) > 0:
             #
