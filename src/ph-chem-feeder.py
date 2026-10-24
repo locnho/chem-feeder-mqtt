@@ -1209,7 +1209,7 @@ async def read_root():
                 </div>
             </nav>    
     """
-    html_mid_str = create_html_ph_graph(7, 8, 600, 800, True)
+    html_mid_str = create_html_ph_graph(7, 8, 650, 750, True)
     html_end_str = """
         </body></html>
     """
@@ -1392,7 +1392,7 @@ def create_html_ph_graph(v_min, v_max, orp_min, orp_max, ignore_zero):
                 overlaying="y",
                 side="right",
                 tickvals=[0, 20, 40, 60, 80, 100],
-                ticktext=['0/Alarm Off', '20/Alarm On', "40", "60", "80", "100"]
+                ticktext=['0', '20', "40", "60", "80", "100"]
             ),
             yaxis3=dict(
                 title_text="<b>Alarm</b>",
